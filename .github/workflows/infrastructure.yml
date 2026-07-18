@@ -28,7 +28,7 @@ jobs:
       - run: terraform -chdir=infra/terraform/aws fmt -check -recursive
       - run: terraform -chdir=infra/terraform/aws init -backend=false
       - run: terraform -chdir=infra/terraform/aws validate
-      - uses: hadolint/hadolint-action@v3.1.0
+      - uses: hadolint/hadolint-action@v3.3.0
         with:
           recursive: true
           dockerfile: infra/docker/node.Dockerfile
