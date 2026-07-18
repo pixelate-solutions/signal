@@ -18,7 +18,11 @@ RUN --mount=type=cache,id=signal-pnpm-store,target=/pnpm/store,sharing=locked \
 FROM mcr.microsoft.com/playwright:v1.61.1-noble
 ENV NODE_ENV=production
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-RUN groupadd --gid 10001 signal \
+RUN rm -rf /usr/lib/node_modules/npm /usr/lib/node_modules/corepack \
+    /usr/lib/node_modules/yarn \
+  && rm -f /usr/bin/npm /usr/bin/npx /usr/bin/corepack /usr/bin/pnpm \
+    /usr/bin/pnpx /usr/bin/yarn /usr/bin/yarnpkg \
+  && groupadd --gid 10001 signal \
   && useradd --uid 10001 --gid signal --create-home signal
 WORKDIR /app
 COPY --from=build --chown=signal:signal /runtime/ ./
