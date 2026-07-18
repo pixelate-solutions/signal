@@ -1,0 +1,16 @@
+aws_region  = "us-east-2"
+dr_region   = "us-west-2"
+environment = "staging"
+eks_version = "1.33"
+vpc_cidr    = "10.41.0.0/16"
+
+domain_name          = "staging.signal.example.com"
+route53_zone_id      = "Z0000000000000000000"
+github_repository    = "pixelate-solutions/signal"
+github_oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
+platform_admin_role_arns = ["arn:aws:iam::123456789012:role/signal-platform-admin"]
+
+tags = {
+  Owner      = "platform"
+  CostCenter = "signal"
+}

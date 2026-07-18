@@ -25,6 +25,12 @@ workloads:
       autoscaling:
         { enabled: false, minReplicas: 1, maxReplicas: 1, targetCPUUtilizationPercentage: 70 },
     }
+  sandbox-runner:
+    {
+      replicas: 1,
+      autoscaling:
+        { enabled: false, minReplicas: 1, maxReplicas: 1, targetCPUUtilizationPercentage: 70 },
+    }
   document:
     {
       replicas: 1,

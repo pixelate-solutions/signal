@@ -2,8 +2,14 @@ import { createHash } from "node:crypto";
 
 import type { ToolAdapter } from "@signal/tool-sdk";
 
+const evidenceId = (value: unknown) =>
+  `evd_${createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 24)}`;
+
 export function createGitHubIssueAdapter(
-  credential: (connectionId: string) => Promise<string>,
+  credential: (
+    connectionId: string,
+    context: { tenantId: string; taskId: string; adapter: string },
+  ) => Promise<string>,
   fetcher: typeof fetch = fetch,
 ): ToolAdapter {
   return {
@@ -26,7 +32,7 @@ export function createGitHubIssueAdapter(
       },
       outputSchema: { type: "object" },
       auth: [{ provider: "github", type: "oauth2" }],
-      requiredScopes: ["issues:write"],
+      requiredScopes: ["repo"],
       riskClass: "R2",
       sideEffect: "external",
       idempotency: "state_check",
@@ -39,11 +45,19 @@ export function createGitHubIssueAdapter(
     execute: async (input, context, cancellation) => {
       if (context.connectionId === null)
         throw new Error("CONNECTION_REQUIRED: GitHub connection required.");
-      const token = await credential(context.connectionId);
+      const token = await credential(context.connectionId, {
+        tenantId: context.tenantId,
+        taskId: context.taskId,
+        adapter: "github.issue.create",
+      });
       const marker = `<!-- signal-idempotency:${createHash("sha256").update(context.idempotencyKey).digest("hex")} -->`;
       const base = `https://api.github.com/repos/${encodeURIComponent(String(input["owner"]))}/${encodeURIComponent(String(input["repo"]))}`;
       const search = await fetcher(`${base}/issues?state=all&per_page=100`, {
-        headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json" },
+        headers: {
+          authorization: `Bearer ${token}`,
+          accept: "application/vnd.github+json",
+          "x-github-api-version": "2026-03-10",
+        },
         signal: cancellation.signal,
       });
       if (search.status === 401)
@@ -72,6 +86,7 @@ export function createGitHubIssueAdapter(
           authorization: `Bearer ${token}`,
           accept: "application/vnd.github+json",
           "content-type": "application/json",
+          "x-github-api-version": "2026-03-10",
         },
         body: JSON.stringify({
           title: input["title"],
@@ -99,6 +114,91 @@ export function createGitHubIssueAdapter(
         evidenceIds: [],
         verificationHint: `Read issue ${issue.number} before claiming completion.`,
         usage: { durationMs: 0, costMinor: 0, currency: "USD" },
+      };
+    },
+    verify: async (input, result, context, cancellation) => {
+      if (
+        context.connectionId === null ||
+        result.data === null ||
+        typeof result.data !== "object"
+      ) {
+        return {
+          ...result,
+          status: "FAILED",
+          sanitizedMessage: "GitHub verification context is incomplete.",
+          errorClass: "unknown",
+          sideEffectState: "unknown",
+        };
+      }
+      const number = (result.data as { number?: unknown }).number;
+      if (typeof number !== "number" || !Number.isInteger(number) || number < 1) {
+        return {
+          ...result,
+          status: "FAILED",
+          sanitizedMessage: "GitHub did not return a verifiable issue number.",
+          errorClass: "unknown",
+          sideEffectState: "unknown",
+        };
+      }
+      const token = await credential(context.connectionId, {
+        tenantId: context.tenantId,
+        taskId: context.taskId,
+        adapter: "github.issue.create.verify",
+      });
+      const owner = encodeURIComponent(String(input["owner"]));
+      const repo = encodeURIComponent(String(input["repo"]));
+      const response = await fetcher(
+        `https://api.github.com/repos/${owner}/${repo}/issues/${number}`,
+        {
+          headers: {
+            authorization: `Bearer ${token}`,
+            accept: "application/vnd.github+json",
+            "x-github-api-version": "2026-03-10",
+          },
+          signal: cancellation.signal,
+        },
+      );
+      if (!response.ok) {
+        return {
+          ...result,
+          status: "FAILED",
+          sanitizedMessage: "GitHub read-after-write verification failed.",
+          errorClass: response.status === 401 ? "auth" : "unknown",
+          sideEffectState: "unknown",
+        };
+      }
+      const observed = (await response.json()) as {
+        number?: number;
+        title?: string;
+        body?: string | null;
+      };
+      const marker = `<!-- signal-idempotency:${createHash("sha256")
+        .update(context.idempotencyKey)
+        .digest("hex")} -->`;
+      const passed =
+        observed.number === number &&
+        observed.title === String(input["title"]) &&
+        typeof observed.body === "string" &&
+        observed.body.includes(String(input["body"])) &&
+        observed.body.includes(marker);
+      const evidence = {
+        number,
+        title: observed.title ?? null,
+        markerPresent: observed.body?.includes(marker) ?? false,
+        passed,
+      };
+      return {
+        ...result,
+        status: passed ? "SUCCEEDED" : "FAILED",
+        sanitizedMessage: passed
+          ? `GitHub issue #${number} was independently verified.`
+          : "The GitHub issue did not match the approved title, body, and idempotency marker.",
+        errorClass: passed ? "none" : "unknown",
+        sideEffectState: passed ? "definitely_completed" : "unknown",
+        evidenceIds: [...result.evidenceIds, evidenceId(evidence)],
+        verificationHint: passed
+          ? "Verified by an independent GitHub issue read."
+          : "Do not claim completion.",
       };
     },
   };

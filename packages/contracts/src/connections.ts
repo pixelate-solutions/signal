@@ -41,7 +41,12 @@ export const connectionLinkSchema = z
     authConfigId: z.string().min(1).max(500).optional(),
     requestedScopes: z.array(z.string().min(1).max(500)).min(1),
     originatingTaskId: taskIdSchema.optional(),
-    returnDeepLink: z.url().or(z.string().regex(/^signal:\/\//)),
+    returnDeepLink: z
+      .string()
+      .max(2_048)
+      .regex(
+        /^signal:\/\/[a-zA-Z0-9][a-zA-Z0-9._~!$&'()*+,;=:@%/-]*(?:\?[a-zA-Z0-9._~!$&'()*+,;=:@%/?-]*)?$/,
+      ),
   })
   .strict();
 

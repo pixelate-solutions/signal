@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -59,3 +59,54 @@ class GeneratedArtifact(StrictModel):
     preview: dict[str, Any]
     checks: list[str]
     warnings: list[str]
+
+
+class ReplaceTextOperation(StrictModel):
+    type: Literal["replace_text"]
+    find: str = Field(min_length=1, max_length=100_000)
+    replacement: str = Field(max_length=100_000)
+    replace_all: bool = True
+
+
+class AppendParagraphOperation(StrictModel):
+    type: Literal["append_paragraph"]
+    text: str = Field(min_length=1, max_length=100_000)
+
+
+class SetCellOperation(StrictModel):
+    type: Literal["set_cell"]
+    sheet: str = Field(min_length=1, max_length=255)
+    cell: str = Field(pattern=r"^[A-Z]{1,3}[1-9][0-9]{0,6}$")
+    value: str | int | float | bool | None
+
+
+class AppendRowOperation(StrictModel):
+    type: Literal["append_row"]
+    sheet: str = Field(min_length=1, max_length=255)
+    values: list[str | int | float | bool | None] = Field(max_length=16_384)
+
+
+class AddSlideOperation(StrictModel):
+    type: Literal["add_slide"]
+    title: str = Field(min_length=1, max_length=300)
+    body: str = Field(max_length=100_000)
+
+
+EditOperation = Annotated[
+    ReplaceTextOperation
+    | AppendParagraphOperation
+    | SetCellOperation
+    | AppendRowOperation
+    | AddSlideOperation,
+    Field(discriminator="type"),
+]
+
+
+class EditRequest(StrictModel):
+    artifact_id: str = Field(min_length=8, max_length=96)
+    file_name: str = Field(min_length=1, max_length=1024)
+    mime_type: str = Field(min_length=1, max_length=255)
+    checksum: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
+    bytes_base64: str = Field(min_length=1)
+    output_file_name: str = Field(min_length=1, max_length=1024)
+    operations: list[EditOperation] = Field(min_length=1, max_length=1_000)

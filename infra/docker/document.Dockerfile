@@ -7,7 +7,12 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 # hadolint ignore=DL3005,DL3008
 RUN apt-get update \
   && apt-get upgrade --yes \
-  && apt-get install --no-install-recommends --yes ffmpeg \
+  && apt-get install --no-install-recommends --yes \
+    ffmpeg \
+    libreoffice-calc \
+    libreoffice-impress \
+    libreoffice-writer \
+    tesseract-ocr \
   && rm -rf /var/lib/apt/lists/* \
   && groupadd --gid 10001 signal \
   && useradd --uid 10001 --gid signal --create-home signal

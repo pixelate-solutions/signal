@@ -1,15 +1,21 @@
-import { Controller, Get, Inject, Res } from "@nestjs/common";
+import { Controller, Get, Inject, Res, ServiceUnavailableException } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import type { FastifyReply } from "fastify";
 
+import { isDemoMode } from "@signal/config";
 import type { SignalTaskService } from "@signal/task-service";
 
 import { TASK_SERVICE } from "../tokens.js";
+import { TASK_RUNTIME } from "../tokens.js";
+import type { TaskRuntime } from "../task-runtime.js";
 
 @ApiTags("operations")
 @Controller()
 export class HealthController {
-  public constructor(@Inject(TASK_SERVICE) private readonly tasks: SignalTaskService) {}
+  public constructor(
+    @Inject(TASK_SERVICE) private readonly tasks: SignalTaskService,
+    @Inject(TASK_RUNTIME) private readonly runtime: TaskRuntime,
+  ) {}
 
   @Get("health")
   @ApiOperation({ summary: "Service health" })
@@ -20,9 +26,18 @@ export class HealthController {
       version: "0.1.0",
       checks: {
         taskService: "ok",
-        demoRuntime: process.env["DEMO_MODE"] === "true" ? "ok" : "degraded",
+        runtime: isDemoMode() ? "deterministic-development" : "temporal",
       },
     };
+  }
+
+  @Get("ready")
+  @ApiOperation({ summary: "Dependency readiness" })
+  public async ready() {
+    if (!(await this.runtime.ready())) {
+      throw new ServiceUnavailableException("The durable workflow service is unavailable.");
+    }
+    return { status: "ready", service: "signal-api", runtime: "connected" };
   }
 
   @Get("metrics")

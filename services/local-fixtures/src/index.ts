@@ -37,8 +37,24 @@ export function createFixtureServer(): FastifyInstance {
     const fixture = request.body["fixture_output"];
     const output = JSON.stringify(
       fixture ?? {
-        summary: "Deterministic local Meta contract fixture.",
-        steps: [],
+        steps: [
+          {
+            id: "observe-local-state",
+            description: "Observe the isolated local provider state.",
+            desiredCapability: "signal_test_state.read",
+            input: { key: "signal-local-v1" },
+            connectionProvider: null,
+            sideEffecting: false,
+          },
+        ],
+        successCriteria: [
+          {
+            id: "local-state-observed",
+            description: "The isolated provider returned independently retained evidence.",
+            required: true,
+          },
+        ],
+        userSummary: "Observe the isolated provider and retain verification evidence.",
       },
     );
     const envelope = responseEnvelope(output);

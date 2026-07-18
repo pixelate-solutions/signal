@@ -25,3 +25,5 @@ services/browser-worker/downloads
 services/sandbox-controller/workspaces
 terraform.tfstate*
 .terraform
+runtime-secret.*.json
+!infra/runtime-secret.example.json

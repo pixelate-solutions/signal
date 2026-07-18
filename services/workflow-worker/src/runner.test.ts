@@ -17,9 +17,30 @@ describe("durable workflow harness", () => {
       transitionTask: async () => undefined,
       retrieveAndPlan: async () => ({
         steps: [
-          { id: "read", description: "Read provider state", sideEffecting: false },
-          { id: "write", description: "Write provider state", sideEffecting: true },
-          { id: "verify", description: "Read it back", sideEffecting: false },
+          {
+            id: "read",
+            description: "Read provider state",
+            desiredCapability: "test.read",
+            input: {},
+            connectionProvider: null,
+            sideEffecting: false,
+          },
+          {
+            id: "write",
+            description: "Write provider state",
+            desiredCapability: "test.write",
+            input: {},
+            connectionProvider: null,
+            sideEffecting: true,
+          },
+          {
+            id: "verify",
+            description: "Read it back",
+            desiredCapability: "test.read",
+            input: {},
+            connectionProvider: null,
+            sideEffecting: false,
+          },
         ],
         successCriteria: [{ id: "verified", description: "State matches", required: true }],
       }),

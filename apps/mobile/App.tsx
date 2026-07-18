@@ -1,18 +1,25 @@
 import "react-native-gesture-handler";
+import "./src/notifications/background";
 
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { DefaultTheme, NavigationContainer } from "@react-navigation/native";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import * as Notifications from "expo-notifications";
 import { MessageCircle, SlidersHorizontal } from "lucide-react-native";
 import { useEffect } from "react";
-import { Platform, StatusBar, Text } from "react-native";
+import { AppState, Platform, StatusBar, Text } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { signalColors } from "@signal/ui";
 
+import { AuthProvider, useAuth } from "./src/auth/auth-provider";
+import { BiometricLockGate } from "./src/auth/biometric-lock";
 import { ChatScreen } from "./src/screens/chat-screen";
 import { ensureDeviceRegistered } from "./src/device/registration";
+import { runPendingDeviceCommands } from "./src/device/runner";
+import { AuthScreen } from "./src/screens/auth-screen";
+import { NotificationRouter } from "./src/notifications/router";
 import { SettingsScreen } from "./src/screens/settings-screen";
 import { useSignalStore } from "./src/state/use-signal-store";
 
@@ -63,35 +70,70 @@ function SignalTabs() {
   );
 }
 
-export default function App() {
+function AuthenticatedSignal() {
   const hydrate = useSignalStore((state) => state.hydrate);
   useEffect(() => {
     void hydrate();
     void ensureDeviceRegistered().catch(() => {
       // Device actions remain unavailable until the authenticated control plane can register this key.
     });
+    void runPendingDeviceCommands();
+    const interval = setInterval(() => {
+      if (AppState.currentState === "active") void runPendingDeviceCommands();
+    }, 5_000);
+    const appState = AppState.addEventListener("change", (state) => {
+      if (state === "active") void runPendingDeviceCommands();
+    });
+    const pushRotation = Notifications.addPushTokenListener(() => {
+      void ensureDeviceRegistered();
+    });
+    return () => {
+      clearInterval(interval);
+      appState.remove();
+      pushRotation.remove();
+    };
   }, [hydrate]);
+  return (
+    <NavigationContainer
+      theme={{
+        ...DefaultTheme,
+        colors: {
+          ...DefaultTheme.colors,
+          primary: signalColors.teal,
+          background: signalColors.canvas,
+          card: signalColors.surface,
+          text: signalColors.ink,
+          border: signalColors.line,
+        },
+      }}
+    >
+      <StatusBar barStyle="dark-content" backgroundColor={signalColors.canvas} />
+      <NotificationRouter />
+      <SignalTabs />
+    </NavigationContainer>
+  );
+}
+
+function AuthGate() {
+  const auth = useAuth();
+  return auth.status === "signed_in" ? (
+    <BiometricLockGate>
+      <AuthenticatedSignal />
+    </BiometricLockGate>
+  ) : (
+    <AuthScreen />
+  );
+}
+
+export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <QueryClientProvider client={queryClient}>
-          <NavigationContainer
-            theme={{
-              ...DefaultTheme,
-              colors: {
-                ...DefaultTheme.colors,
-                primary: signalColors.teal,
-                background: signalColors.canvas,
-                card: signalColors.surface,
-                text: signalColors.ink,
-                border: signalColors.line,
-              },
-            }}
-          >
-            <StatusBar barStyle="dark-content" backgroundColor={signalColors.canvas} />
-            <SignalTabs />
-          </NavigationContainer>
-        </QueryClientProvider>
+        <AuthProvider>
+          <QueryClientProvider client={queryClient}>
+            <AuthGate />
+          </QueryClientProvider>
+        </AuthProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

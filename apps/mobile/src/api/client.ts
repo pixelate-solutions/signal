@@ -5,14 +5,21 @@ import type {
   ActionRequest,
   ActionResponseInput,
   Artifact,
+  ArtifactEditOperation,
+  CanonicalArtifact,
   Connection,
   Conversation,
   MemoryItem,
   Settings,
+  Task,
   TaskEvent,
+  DeviceCommand,
+  DeviceCommandResult,
 } from "@signal/contracts";
 
 import type { ConversationDetail, CreatedTask, Page, TaskDetail } from "../types";
+import { clearStoredSession, getValidAccessToken } from "../auth/token-store";
+import { useSignalStore } from "../state/use-signal-store";
 
 export type UploadSession = {
   uploadId: string;
@@ -20,6 +27,66 @@ export type UploadSession = {
   partSizeBytes: number;
   partUrls: string[];
   expiresAt: string;
+};
+
+export type AccountProfile = {
+  id: string;
+  tenantId: string;
+  displayName: string;
+  email: string | null;
+  locale: string;
+  timezone: string;
+  status: string;
+};
+
+export type AccountSession = {
+  id: string;
+  deviceId: string | null;
+  authenticatedAt: string;
+  expiresAt: string;
+  lastSeenAt: string;
+  revokedAt: string | null;
+  current: boolean;
+};
+
+export type OrganizationMembership = {
+  tenantId: string;
+  name: string;
+  role: string;
+  status: string;
+  personal: boolean;
+};
+
+export type RegisteredDevice = {
+  id: string;
+  platform: "ios" | "android";
+  displayName: string;
+  capabilities: string[];
+  permissions: Record<string, "granted" | "denied" | "prompt">;
+  status: "active" | "revoked";
+  lastSeenAt: string;
+};
+
+export type GeneratedCapability = {
+  id: string;
+  taskId: string;
+  status: string;
+  version: string;
+  logicalPackagePath: string;
+  candidateDigest: string;
+  gap: {
+    requiredAction?: string;
+    provider?: string;
+    scopes?: string[];
+    riskClass?: string;
+  };
+  sources: { url?: string; contentHash?: string; retrievedAt?: string }[];
+  stages: { stage?: string; result?: { passed?: boolean; summary?: string } }[];
+  signature: { digest?: string; signature?: string } | null;
+  rollbackReason: string | null;
+  files?: { path: string; content: string; contentHash: string }[];
+  createdAt: string;
+  updatedAt: string;
 };
 
 type ApiErrorBody = {
@@ -59,11 +126,16 @@ async function request<T>(
   headers.set("accept", "application/json");
   if (init.body !== undefined) headers.set("content-type", "application/json");
   if (idempotencyKey !== undefined) headers.set("idempotency-key", idempotencyKey);
+  const accessToken = await getValidAccessToken();
+  if (accessToken !== null) headers.set("authorization", `Bearer ${accessToken}`);
+  const activeTenantId = useSignalStore.getState().activeTenantId;
+  if (activeTenantId !== null) headers.set("x-signal-tenant-id", activeTenantId);
   const response = await fetch(`${signalApiBaseUrl}${path}`, {
     ...init,
     headers,
   });
   if (!response.ok) {
+    if (response.status === 401 && accessToken !== null) await clearStoredSession();
     const body = (await response.json().catch(() => ({}))) as ApiErrorBody;
     throw new SignalApiError(
       body.error?.message ?? `Signal API returned ${response.status}.`,
@@ -77,6 +149,10 @@ async function request<T>(
 
 export const signalApi = {
   listConversations: () => request<Page<Conversation>>("/v1/conversations"),
+  searchTasks: (query: string, state?: string) =>
+    request<Page<Task>>(
+      `/v1/tasks?query=${encodeURIComponent(query)}${state === undefined ? "" : `&state=${encodeURIComponent(state)}`}`,
+    ),
   createConversation: (title?: string) =>
     request<Conversation>("/v1/conversations", {
       method: "POST",
@@ -119,11 +195,106 @@ export const signalApi = {
   listConnections: () => request<Page<Connection>>("/v1/connections"),
   listMemories: () => request<Page<MemoryItem>>("/v1/memories"),
   getSettings: () => request<Settings>("/v1/settings"),
+  updateSettings: (settings: Settings, patch: Partial<Omit<Settings, "version" | "updatedAt">>) =>
+    request<Settings>("/v1/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ expectedVersion: settings.version, ...patch }),
+    }),
+  getAccount: () => request<AccountProfile>("/v1/account"),
+  updateAccount: (patch: { displayName?: string; locale?: string; timezone?: string }) =>
+    request<AccountProfile>("/v1/account", { method: "PATCH", body: JSON.stringify(patch) }),
+  listSessions: () => request<Page<AccountSession>>("/v1/account/sessions"),
+  revokeSession: (id: string) =>
+    request<{ revoked: true }>(`/v1/account/sessions/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+  listOrganizations: () => request<Page<OrganizationMembership>>("/v1/account/organizations"),
+  acceptOrganizationInvitation: (tenantId: string, token: string) =>
+    request<OrganizationMembership & { userId: string; requiresTokenRefresh: boolean }>(
+      "/v1/account/organizations/invitations/accept",
+      { method: "POST", body: JSON.stringify({ tenantId, token }) },
+    ),
+  inviteOrganizationMember: (email: string, role: "administrator" | "member" | "auditor") =>
+    request<{ id: string; expiresAt: string; developmentToken?: string }>(
+      "/v1/account/organizations/invitations",
+      { method: "POST", body: JSON.stringify({ email, role }) },
+    ),
+  getAccountSecurity: () =>
+    request<{
+      passkeysSupported: boolean;
+      manageSignInMethodsUrl: string;
+      recoveryUrl: string;
+    }>("/v1/account/security"),
+  createDataExport: () =>
+    request<{
+      id: string;
+      status: "ready";
+      sizeBytes: number;
+      contentHash: string;
+      downloadPath: string;
+    }>("/v1/account/exports", { method: "POST", body: JSON.stringify({}) }),
+  readDataExport: (id: string) => request<unknown>(`/v1/account/exports/${encodeURIComponent(id)}`),
+  deleteAccount: (confirmation: string) =>
+    request<{ id: string; status: string; executeAfter: string }>("/v1/account", {
+      method: "DELETE",
+      body: JSON.stringify({ confirmation }),
+    }),
+  linkConnection: (input: {
+    provider: string;
+    toolkit: string;
+    requestedScopes: string[];
+    returnDeepLink: string;
+  }) =>
+    request<{ state: string; redirectUrl: string; expiresAt: string }>("/v1/connections/link", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  setConnectionStatus: (id: string, action: "enable" | "disable" | "revoke") =>
+    request<Connection>(`/v1/connections/${encodeURIComponent(id)}/${action}`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  reauthenticateConnection: (id: string) =>
+    request<{ state: string; redirectUrl: string; expiresAt: string }>(
+      `/v1/connections/${encodeURIComponent(id)}/reauthenticate`,
+      {
+        method: "POST",
+        body: JSON.stringify({ returnDeepLink: "signal://settings/connections" }),
+      },
+    ),
+  updateMemory: (id: string, patch: Record<string, unknown>) =>
+    request<MemoryItem>(`/v1/memories/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }),
+  deleteMemory: (id: string) =>
+    request<MemoryItem>(`/v1/memories/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  createMemory: (input: Record<string, unknown>) =>
+    request<MemoryItem>("/v1/memories", { method: "POST", body: JSON.stringify(input) }),
+  listDevices: () => request<Page<RegisteredDevice>>("/v1/devices"),
+  updateDevicePermissions: (
+    id: string,
+    permissions: Record<string, "granted" | "denied" | "prompt">,
+  ) =>
+    request<RegisteredDevice>(`/v1/devices/${encodeURIComponent(id)}/permissions`, {
+      method: "PATCH",
+      body: JSON.stringify({ permissions }),
+    }),
+  revokeDevice: (id: string) =>
+    request<RegisteredDevice>(`/v1/devices/${encodeURIComponent(id)}/revoke`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
   respondToAction: (action: ActionRequest, input: ActionResponseInput) =>
     request(`/v1/action-requests/${encodeURIComponent(action.id)}/respond`, {
       method: "POST",
       body: JSON.stringify(input),
     }),
+  submitSecureInput: (actionId: string, value: string) =>
+    request<{ authenticationProofHandle: string }>(
+      `/v1/action-requests/${encodeURIComponent(actionId)}/secure-input`,
+      { method: "POST", body: JSON.stringify({ value }) },
+    ),
   emergencyStop: (reason: string) =>
     request<{ stopped: boolean; affectedTaskIds: string[] }>("/v1/security/emergency-stop", {
       method: "POST",
@@ -148,16 +319,79 @@ export const signalApi = {
       },
       randomUUID(),
     ),
+  getArtifact: (id: string) => request<Artifact>(`/v1/artifacts/${encodeURIComponent(id)}`),
+  getArtifactVersions: (id: string) =>
+    request<Page<Artifact>>(`/v1/artifacts/${encodeURIComponent(id)}/versions`),
+  getArtifactRepresentation: (id: string) =>
+    request<CanonicalArtifact>(`/v1/artifacts/${encodeURIComponent(id)}/representation`),
+  createArtifactVersion: (
+    id: string,
+    input: { fileName?: string; operations: ArtifactEditOperation[] },
+  ) =>
+    request<Artifact>(`/v1/artifacts/${encodeURIComponent(id)}/versions`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  getBrowserSession: (id: string) =>
+    request<{
+      id: string;
+      taskId: string;
+      status: string;
+      completedSteps: number;
+      artifactIds: string[];
+      updatedAt: string;
+      lastError: string | null;
+      latestEvidence: {
+        id: string;
+        url: string;
+        capturedAt: string;
+        postActionSummary: string;
+        screenshotDigest: string | null;
+      } | null;
+    }>(`/v1/browser/sessions/${encodeURIComponent(id)}`),
+  getBrowserScreenshotSource: async (sessionId: string, evidenceId: string) => {
+    const accessToken = await getValidAccessToken();
+    if (accessToken === null) throw new Error("Sign in to view browser evidence.");
+    const headers: Record<string, string> = { authorization: `Bearer ${accessToken}` };
+    const activeTenantId = useSignalStore.getState().activeTenantId;
+    if (activeTenantId !== null) headers["x-signal-tenant-id"] = activeTenantId;
+    return {
+      uri: `${signalApiBaseUrl}/v1/browser/sessions/${encodeURIComponent(sessionId)}/evidence/${encodeURIComponent(evidenceId)}/screenshot`,
+      headers,
+    };
+  },
+  getBrowserEvents: (id: string) =>
+    request<Page<{ id: string; sequence: number; type: string; occurredAt: string }>>(
+      `/v1/browser/sessions/${encodeURIComponent(id)}/events`,
+    ),
+  listGeneratedCapabilities: () => request<Page<GeneratedCapability>>("/v1/developer/capabilities"),
+  getGeneratedCapability: (id: string) =>
+    request<GeneratedCapability>(`/v1/developer/capabilities/${encodeURIComponent(id)}`),
+  rollbackGeneratedCapability: (id: string, reason: string) =>
+    request<GeneratedCapability>(`/v1/developer/capabilities/${encodeURIComponent(id)}/rollback`, {
+      method: "POST",
+      headers: { "x-reason": reason },
+      body: JSON.stringify({}),
+    }),
   registerDevice: (input: {
     platform: "ios" | "android";
     appVariant: "consumer" | "managed_enterprise";
     displayName: string;
     publicKey: string;
-    pushTokenHandle: string | null;
+    pushToken: string | null;
     capabilities: string[];
   }) =>
-    request<{ id: string }>("/v1/devices/register", {
+    request<{ id: string; serverPublicKey: string }>("/v1/devices/register", {
       method: "POST",
       body: JSON.stringify(input),
     }),
+  pendingDeviceCommands: (deviceId: string) =>
+    request<Page<DeviceCommand> & { serverPublicKey: string }>(
+      `/v1/device-commands?deviceId=${encodeURIComponent(deviceId)}`,
+    ),
+  submitDeviceCommandResult: (result: DeviceCommandResult) =>
+    request<DeviceCommandResult>(
+      `/v1/device-commands/${encodeURIComponent(result.commandId)}/result`,
+      { method: "POST", body: JSON.stringify(result) },
+    ),
 };

@@ -1,0 +1,173 @@
+{{- if .Values.observability.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "signal.fullname" . }}-observability
+  labels:
+    {{- include "signal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: observability
+data:
+  collector.yaml: |
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+      prometheus:
+        config:
+          scrape_configs:
+            - job_name: signal-api
+              scrape_interval: 30s
+              static_configs:
+                - targets: ["{{ include "signal.fullname" . }}-api:80"]
+    processors:
+      memory_limiter:
+        check_interval: 5s
+        limit_mib: 768
+        spike_limit_mib: 192
+      batch:
+        send_batch_size: 512
+        timeout: 10s
+    exporters:
+      awsemf:
+        region: {{ .Values.observability.awsRegion | quote }}
+        namespace: {{ .Values.observability.metricsNamespace | quote }}
+        log_group_name: "/signal/{{ .Values.observability.clusterName }}/metrics"
+        log_stream_name: "otel-metrics"
+        log_retention: {{ .Values.observability.logRetentionDays }}
+        dimension_rollup_option: NoDimensionRollup
+        resource_to_telemetry_conversion:
+          enabled: true
+      awsxray:
+        region: {{ .Values.observability.awsRegion | quote }}
+        aws_log_groups: ["/signal/{{ .Values.observability.clusterName }}/application"]
+      awscloudwatchlogs:
+        region: {{ .Values.observability.awsRegion | quote }}
+        log_group_name: "/signal/{{ .Values.observability.clusterName }}/application"
+        log_stream_name: "otel-application"
+        log_retention: {{ .Values.observability.logRetentionDays }}
+    service:
+      extensions: [health_check]
+      pipelines:
+        metrics:
+          receivers: [otlp, prometheus]
+          processors: [memory_limiter, batch]
+          exporters: [awsemf]
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [awsxray]
+        logs:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [awscloudwatchlogs]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "signal.fullname" . }}-observability
+  labels:
+    {{- include "signal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: observability
+spec:
+  replicas: {{ .Values.observability.replicas }}
+  revisionHistoryLimit: 3
+  minReadySeconds: 10
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "signal.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: observability
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "signal.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/part-of: signal
+        app.kubernetes.io/component: observability
+        signal.pixelate.dev/identity: observability
+    spec:
+      serviceAccountName: {{ include "signal.serviceAccount" (list . "observability") }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      nodeSelector:
+        signal.pixelate.dev/pool: core
+      securityContext:
+        {{- toYaml .Values.global.podSecurityContext | nindent 8 }}
+      containers:
+        - name: collector
+          image: {{ .Values.observability.image | quote }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          args: ["--config=/conf/collector.yaml"]
+          ports:
+            - { name: otlp-grpc, containerPort: 4317, protocol: TCP }
+            - { name: otlp-http, containerPort: 4318, protocol: TCP }
+            - { name: health, containerPort: 13133, protocol: TCP }
+          startupProbe:
+            httpGet: { path: /, port: health }
+            failureThreshold: 30
+            periodSeconds: 5
+          readinessProbe:
+            httpGet: { path: /, port: health }
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet: { path: /, port: health }
+            periodSeconds: 20
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml .Values.observability.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: config, mountPath: /conf, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "signal.fullname" . }}-observability
+        - name: tmp
+          emptyDir: { sizeLimit: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "signal.fullname" . }}-observability
+  labels:
+    {{- include "signal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: observability
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ include "signal.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: observability
+  ports:
+    - { name: otlp-grpc, port: 4317, targetPort: otlp-grpc, protocol: TCP }
+    - { name: otlp-http, port: 4318, targetPort: otlp-http, protocol: TCP }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "signal.fullname" . }}-observability
+  labels:
+    {{- include "signal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: observability
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "signal.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: observability
+{{- end }}

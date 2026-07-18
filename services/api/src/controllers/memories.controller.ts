@@ -23,11 +23,14 @@ export class MemoriesController {
   public constructor(@Inject(MEMORY_SERVICE) private readonly memories: MemoryService) {}
 
   @Get()
-  public list(
+  public async list(
     @RequestPrincipal() principal: Principal,
     @Query("includeHistory") includeHistory: string | undefined,
   ) {
-    return { items: this.memories.list(principal, includeHistory === "true"), nextCursor: null };
+    return {
+      items: await this.memories.list(principal, includeHistory === "true"),
+      nextCursor: null,
+    };
   }
 
   @Post()

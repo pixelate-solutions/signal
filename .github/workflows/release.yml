@@ -50,22 +50,226 @@ jobs:
           push: true
           provenance: true
           sbom: true
-          tags: ghcr.io/pixelate-solutions/signal-${{ matrix.name }}:${{ github.ref_name }}
+          tags: |
+            ghcr.io/pixelate-solutions/signal-${{ matrix.name }}:${{ github.ref_name }}
+            ghcr.io/pixelate-solutions/signal-${{ matrix.name }}:${{ github.sha }}
       - uses: actions/attest-build-provenance@v2
         with:
           subject-name: ghcr.io/pixelate-solutions/signal-${{ matrix.name }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
+      - name: Record immutable image digest
+        env:
+          SIGNAL_IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          SIGNAL_IMAGE_NAME: ${{ matrix.name }}
+        run: |
+          test -n "$SIGNAL_IMAGE_DIGEST"
+          mkdir -p "$RUNNER_TEMP/image-digest"
+          printf '%s' "$SIGNAL_IMAGE_DIGEST" > "$RUNNER_TEMP/image-digest/$SIGNAL_IMAGE_NAME"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-digest-${{ matrix.name }}
+          path: ${{ runner.temp }}/image-digest/${{ matrix.name }}
+          if-no-files-found: error
+          retention-days: 7
 
   deploy-staging:
     needs: images
-    runs-on: ubuntu-24.04
+    runs-on: signal-deploy-staging
     environment: staging-core
+    env:
+      SIGNAL_NAMESPACE: signal
+      SIGNAL_RUNTIME_SECRET: signal-staging-runtime
     steps:
       - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
-      - uses: azure/k8s-set-context@v4
+      - uses: actions/setup-node@v4
         with:
-          method: kubeconfig
-          kubeconfig: ${{ secrets.KUBE_CONFIG }}
-      - run: helm upgrade --install signal infra/helm/signal --namespace signal --create-namespace --values infra/helm/values-staging.yaml --atomic --timeout 15m
+          node-version: 24
+      - uses: azure/setup-helm@v4
+      - name: Install pinned deployment tools
+        run: scripts/install-deploy-runner-tools.sh
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: image-digest-*
+          path: ${{ runner.temp }}/image-digests
+          merge-multiple: true
+      - name: Resolve attested image digests
+        run: |
+          resolve_image() {
+            local image_name="$1"
+            local image_digest
+            image_digest="$(tr -d '\n' < "$RUNNER_TEMP/image-digests/$image_name")"
+            [[ "$image_digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+            printf 'ghcr.io/pixelate-solutions/signal-%s@%s' "$image_name" "$image_digest"
+          }
+          {
+            echo "SIGNAL_API_IMAGE=$(resolve_image api)"
+            echo "SIGNAL_WORKFLOW_IMAGE=$(resolve_image workflow-worker)"
+            echo "SIGNAL_BROWSER_IMAGE=$(resolve_image browser-worker)"
+            echo "SIGNAL_SANDBOX_IMAGE=$(resolve_image sandbox-controller)"
+            echo "SIGNAL_DOCUMENT_IMAGE=$(resolve_image document-worker)"
+          } >> "$GITHUB_ENV"
+      - name: Require commissioned staging inputs
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME }}
+          AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          SIGNAL_HOST: ${{ vars.SIGNAL_HOST }}
+          SIGNAL_CERTIFICATE_ARN: ${{ vars.SIGNAL_CERTIFICATE_ARN }}
+          SIGNAL_WAF_ACL_ARN: ${{ vars.SIGNAL_WAF_ACL_ARN }}
+          SIGNAL_VPC_CIDR: ${{ vars.SIGNAL_VPC_CIDR }}
+          SIGNAL_STAGING_BEARER_TOKEN: ${{ secrets.SIGNAL_STAGING_BEARER_TOKEN }}
+          SIGNAL_STAGING_EXPECTED_PROVIDERS: ${{ vars.SIGNAL_STAGING_EXPECTED_PROVIDERS }}
+        run: |
+          test -n "$AWS_REGION"
+          test -n "$EKS_CLUSTER_NAME"
+          test -n "$AWS_DEPLOY_ROLE_ARN"
+          test -n "$SIGNAL_HOST"
+          test -n "$SIGNAL_CERTIFICATE_ARN"
+          test -n "$SIGNAL_WAF_ACL_ARN"
+          test -n "$SIGNAL_VPC_CIDR"
+          test -n "$SIGNAL_STAGING_BEARER_TOKEN"
+          test -n "$SIGNAL_STAGING_EXPECTED_PROVIDERS"
+      - uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - run: aws eks update-kubeconfig --name "${{ vars.EKS_CLUSTER_NAME }}" --region "${{ vars.AWS_REGION }}"
+      - name: Apply forward-only database migrations
+        run: scripts/deploy-migrations.sh
+      - name: Deploy immutable staging release
+        run: |
+          helm upgrade --install signal infra/helm/signal \
+            --namespace "$SIGNAL_NAMESPACE" --create-namespace \
+            --values infra/helm/values-staging.yaml \
+            --set-string workloads.api.image="$SIGNAL_API_IMAGE" \
+            --set-string workloads.workflow.image="$SIGNAL_WORKFLOW_IMAGE" \
+            --set-string workloads.browser.image="$SIGNAL_BROWSER_IMAGE" \
+            --set-string workloads.sandbox.image="$SIGNAL_SANDBOX_IMAGE" \
+            --set-string workloads.sandbox-runner.image="$SIGNAL_SANDBOX_IMAGE" \
+            --set-string workloads.generated-canary.image="$SIGNAL_SANDBOX_IMAGE" \
+            --set-string workloads.document.image="$SIGNAL_DOCUMENT_IMAGE" \
+            --set-string ingress.hosts[0].host=${{ vars.SIGNAL_HOST }} \
+            --set-string ingress.certificateArn=${{ vars.SIGNAL_CERTIFICATE_ARN }} \
+            --set-string ingress.wafAclArn=${{ vars.SIGNAL_WAF_ACL_ARN }} \
+            --set-string config.APP_PUBLIC_URL=https://${{ vars.SIGNAL_HOST }} \
+            --set-string observability.awsRegion=${{ vars.AWS_REGION }} \
+            --set-string observability.clusterName=${{ vars.EKS_CLUSTER_NAME }} \
+            --set-string fargateLogging.awsRegion=${{ vars.AWS_REGION }} \
+            --set-string fargateLogging.logGroupName=/aws/eks/${{ vars.EKS_CLUSTER_NAME }}/fargate/isolated \
+            --set-string networkPolicy.loadBalancerSourceCidrs[0]=${{ vars.SIGNAL_VPC_CIDR }} \
+            --set-string networkPolicy.privateServiceCidrs[0]=${{ vars.SIGNAL_VPC_CIDR }} \
+            --atomic --timeout 20m
+      - name: Verify rollout and public health
+        run: |
+          for deployment in api workflow browser sandbox sandbox-runner generated-canary document opa clamav observability; do
+            kubectl --namespace "$SIGNAL_NAMESPACE" rollout status "deployment/signal-signal-$deployment" --timeout=10m
+          done
+          curl --fail --retry 20 --retry-all-errors --retry-delay 10 "https://${{ vars.SIGNAL_HOST }}/health"
+          curl --fail --retry 20 --retry-all-errors --retry-delay 10 "https://${{ vars.SIGNAL_HOST }}/ready"
+          curl --fail --retry 5 --retry-all-errors "https://${{ vars.SIGNAL_HOST }}/v1/identity/configuration"
+      - name: Verify model, OAuth, and provider staging health
+        env:
+          SIGNAL_STAGING_BASE_URL: https://${{ vars.SIGNAL_HOST }}
+          SIGNAL_STAGING_BEARER_TOKEN: ${{ secrets.SIGNAL_STAGING_BEARER_TOKEN }}
+          SIGNAL_STAGING_EXPECTED_PROVIDERS: ${{ vars.SIGNAL_STAGING_EXPECTED_PROVIDERS }}
+          SIGNAL_STAGING_TENANT_ID: ${{ vars.SIGNAL_STAGING_TENANT_ID }}
+        run: |
+          workflow_pod="$(kubectl --namespace "$SIGNAL_NAMESPACE" get pod \
+            --selector app.kubernetes.io/component=workflow \
+            --field-selector status.phase=Running \
+            --output jsonpath='{.items[0].metadata.name}')"
+          test -n "$workflow_pod"
+          kubectl --namespace "$SIGNAL_NAMESPACE" exec "$workflow_pod" -- \
+            node -e 'fetch("http://127.0.0.1:3500/provider-health").then(async response => { const body = await response.text(); console.log(body); if (!response.ok) process.exit(1); })'
+          node scripts/verify-provider-staging.mjs
+
+  deploy-production:
+    needs: deploy-staging
+    runs-on: signal-deploy-production
+    environment: production-core
+    env:
+      SIGNAL_NAMESPACE: signal
+      SIGNAL_RUNTIME_SECRET: signal-production-runtime
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: azure/setup-helm@v4
+      - name: Install pinned deployment tools
+        run: scripts/install-deploy-runner-tools.sh
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: image-digest-*
+          path: ${{ runner.temp }}/image-digests
+          merge-multiple: true
+      - name: Resolve staging-verified image digests
+        run: |
+          resolve_image() {
+            local image_name="$1"
+            local image_digest
+            image_digest="$(tr -d '\n' < "$RUNNER_TEMP/image-digests/$image_name")"
+            [[ "$image_digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+            printf 'ghcr.io/pixelate-solutions/signal-%s@%s' "$image_name" "$image_digest"
+          }
+          {
+            echo "SIGNAL_API_IMAGE=$(resolve_image api)"
+            echo "SIGNAL_WORKFLOW_IMAGE=$(resolve_image workflow-worker)"
+            echo "SIGNAL_BROWSER_IMAGE=$(resolve_image browser-worker)"
+            echo "SIGNAL_SANDBOX_IMAGE=$(resolve_image sandbox-controller)"
+            echo "SIGNAL_DOCUMENT_IMAGE=$(resolve_image document-worker)"
+          } >> "$GITHUB_ENV"
+      - uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - run: aws eks update-kubeconfig --name "${{ vars.EKS_CLUSTER_NAME }}" --region "${{ vars.AWS_REGION }}"
+      - name: Require commissioned production inputs
+        run: |
+          test -n "${{ vars.AWS_REGION }}"
+          test -n "${{ vars.EKS_CLUSTER_NAME }}"
+          test -n "${{ vars.AWS_DEPLOY_ROLE_ARN }}"
+          test -n "${{ vars.SIGNAL_HOST }}"
+          test -n "${{ vars.SIGNAL_CERTIFICATE_ARN }}"
+          test -n "${{ vars.SIGNAL_WAF_ACL_ARN }}"
+          test -n "${{ vars.SIGNAL_VPC_CIDR }}"
+      - name: Apply forward-only database migrations
+        run: scripts/deploy-migrations.sh
+      - name: Promote the verified immutable release
+        run: |
+          helm upgrade --install signal infra/helm/signal \
+            --namespace "$SIGNAL_NAMESPACE" --create-namespace \
+            --values infra/helm/values-production.yaml \
+            --set-string workloads.api.image="$SIGNAL_API_IMAGE" \
+            --set-string workloads.workflow.image="$SIGNAL_WORKFLOW_IMAGE" \
+            --set-string workloads.browser.image="$SIGNAL_BROWSER_IMAGE" \
+            --set-string workloads.sandbox.image="$SIGNAL_SANDBOX_IMAGE" \
+            --set-string workloads.sandbox-runner.image="$SIGNAL_SANDBOX_IMAGE" \
+            --set-string workloads.generated-canary.image="$SIGNAL_SANDBOX_IMAGE" \
+            --set-string workloads.document.image="$SIGNAL_DOCUMENT_IMAGE" \
+            --set-string ingress.hosts[0].host=${{ vars.SIGNAL_HOST }} \
+            --set-string ingress.certificateArn=${{ vars.SIGNAL_CERTIFICATE_ARN }} \
+            --set-string ingress.wafAclArn=${{ vars.SIGNAL_WAF_ACL_ARN }} \
+            --set-string config.APP_PUBLIC_URL=https://${{ vars.SIGNAL_HOST }} \
+            --set-string observability.awsRegion=${{ vars.AWS_REGION }} \
+            --set-string observability.clusterName=${{ vars.EKS_CLUSTER_NAME }} \
+            --set-string fargateLogging.awsRegion=${{ vars.AWS_REGION }} \
+            --set-string fargateLogging.logGroupName=/aws/eks/${{ vars.EKS_CLUSTER_NAME }}/fargate/isolated \
+            --set-string networkPolicy.loadBalancerSourceCidrs[0]=${{ vars.SIGNAL_VPC_CIDR }} \
+            --set-string networkPolicy.privateServiceCidrs[0]=${{ vars.SIGNAL_VPC_CIDR }} \
+            --atomic --timeout 20m
+      - name: Verify production rollout and public health
+        run: |
+          for deployment in api workflow browser sandbox sandbox-runner generated-canary document opa clamav observability; do
+            kubectl --namespace "$SIGNAL_NAMESPACE" rollout status "deployment/signal-signal-$deployment" --timeout=10m
+          done
+          curl --fail --retry 20 --retry-all-errors --retry-delay 10 "https://${{ vars.SIGNAL_HOST }}/health"
+          curl --fail --retry 20 --retry-all-errors --retry-delay 10 "https://${{ vars.SIGNAL_HOST }}/ready"
+          workflow_pod="$(kubectl --namespace "$SIGNAL_NAMESPACE" get pod \
+            --selector app.kubernetes.io/component=workflow \
+            --field-selector status.phase=Running \
+            --output jsonpath='{.items[0].metadata.name}')"
+          test -n "$workflow_pod"
+          kubectl --namespace "$SIGNAL_NAMESPACE" exec "$workflow_pod" -- \
+            node -e 'fetch("http://127.0.0.1:3500/provider-health").then(async response => { const body = await response.text(); console.log(body); if (!response.ok) process.exit(1); })'

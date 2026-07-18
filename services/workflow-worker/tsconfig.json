@@ -5,6 +5,20 @@
     "rootDir": "src",
     "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
-  "references": [{ "path": "../../packages/contracts" }],
+  "references": [
+    { "path": "../../packages/config" },
+    { "path": "../../packages/contracts" },
+    { "path": "../../packages/memory-sdk" },
+    { "path": "../../packages/persistence" },
+    { "path": "../../packages/tool-sdk" },
+    { "path": "../agent-worker" },
+    { "path": "../connection-service" },
+    { "path": "../memory-service" },
+    { "path": "../task-service" },
+    { "path": "../tool-gateway" },
+    { "path": "../../integrations/native/google" },
+    { "path": "../../integrations/native/github" },
+    { "path": "../../integrations/native/signal-test-state" }
+  ],
   "include": ["src/**/*.ts"]
 }

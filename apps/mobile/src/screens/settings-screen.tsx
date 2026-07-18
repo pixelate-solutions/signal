@@ -17,6 +17,7 @@ import {
   Smartphone,
 } from "lucide-react-native";
 import type { LucideIcon } from "lucide-react-native";
+import { useState } from "react";
 import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -24,6 +25,7 @@ import { signalColors, signalRadius, signalSpacing } from "@signal/ui";
 
 import { signalApi, signalApiBaseUrl } from "../api/client";
 import { BrandMark } from "../components/brand-mark";
+import { SettingsDetail, type SettingsRoute } from "./settings-detail";
 
 type SettingsRowProps = {
   icon: LucideIcon;
@@ -110,6 +112,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 export function SettingsScreen() {
   const insets = useSafeAreaInsets();
+  const [route, setRoute] = useState<SettingsRoute | null>(null);
   const settings = useQuery({
     queryKey: ["settings"],
     queryFn: signalApi.getSettings,
@@ -152,6 +155,27 @@ export function SettingsScreen() {
   const connectionCount =
     connections.data?.items.filter((item) => item.status === "ACTIVE").length ?? 0;
   const memoryCount = memories.data?.items.filter((item) => item.status === "active").length ?? 0;
+  const controlPlane =
+    settings.isPending || connections.isPending || memories.isPending
+      ? {
+          label: "CHECKING",
+          accessibilityLabel: "Checking control plane connection",
+          foreground: signalColors.inkMuted,
+          background: signalColors.canvas,
+        }
+      : settings.isError || connections.isError || memories.isError
+        ? {
+            label: "DEGRADED",
+            accessibilityLabel: "Control plane connection degraded",
+            foreground: signalColors.amber,
+            background: signalColors.amberSoft,
+          }
+        : {
+            label: "ONLINE",
+            accessibilityLabel: "Control plane connected",
+            foreground: signalColors.tealDark,
+            background: signalColors.tealSoft,
+          };
   return (
     <View style={{ flex: 1, backgroundColor: signalColors.canvas }}>
       <View
@@ -172,22 +196,27 @@ export function SettingsScreen() {
           </Text>
         </View>
         <View
-          accessibilityLabel="Control plane connected"
+          accessibilityLabel={controlPlane.accessibilityLabel}
           style={{
             flexDirection: "row",
             alignItems: "center",
             gap: 6,
             paddingHorizontal: 10,
             paddingVertical: 6,
-            backgroundColor: signalColors.tealSoft,
+            backgroundColor: controlPlane.background,
             borderRadius: signalRadius.pill,
           }}
         >
           <View
-            style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: signalColors.teal }}
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: 4,
+              backgroundColor: controlPlane.foreground,
+            }}
           />
-          <Text style={{ color: signalColors.tealDark, fontSize: 10, fontWeight: "800" }}>
-            ONLINE
+          <Text style={{ color: controlPlane.foreground, fontSize: 10, fontWeight: "800" }}>
+            {controlPlane.label}
           </Text>
         </View>
       </View>
@@ -198,7 +227,8 @@ export function SettingsScreen() {
           paddingBottom: insets.bottom + 100,
         }}
       >
-        <View
+        <Pressable
+          onPress={() => setRoute("account")}
           style={{
             backgroundColor: signalColors.ink,
             borderRadius: signalRadius.lg,
@@ -242,23 +272,26 @@ export function SettingsScreen() {
             </Text>
           </View>
           <ChevronRight color="#AFC5BF" size={19} />
-        </View>
+        </Pressable>
 
         <Section title="Account & access">
           <SettingsRow
             icon={KeyRound}
             title="Account and sessions"
             detail="Review active sessions and recent authentication"
+            onPress={() => setRoute("account")}
           />
           <SettingsRow
             icon={Link2}
             title="Connections"
             detail={`${connectionCount} active connection${connectionCount === 1 ? "" : "s"} · OAuth credentials stay brokered`}
+            onPress={() => setRoute("connections")}
           />
           <SettingsRow
             icon={Fingerprint}
             title="Biometric lock"
             detail={settings.data?.biometricLock ? "Required" : "Not enabled"}
+            onPress={() => setRoute("security")}
           />
         </Section>
 
@@ -267,16 +300,19 @@ export function SettingsScreen() {
             icon={Shield}
             title="Permissions"
             detail="Capability classes, domains, recipients, and spending limits"
+            onPress={() => setRoute("permissions")}
           />
           <SettingsRow
             icon={ShieldAlert}
             title="Approval rules"
             detail="R2 and higher require an exact, digest-bound decision"
+            onPress={() => setRoute("approvals")}
           />
           <SettingsRow
             icon={Smartphone}
             title="Device access"
             detail="Foreground-only safe actions · enterprise controls separated"
+            onPress={() => setRoute("devices")}
           />
         </Section>
 
@@ -285,16 +321,19 @@ export function SettingsScreen() {
             icon={MemoryStick}
             title="Memory"
             detail={`${memoryCount} active item${memoryCount === 1 ? "" : "s"} · inspect, correct, forget, or export`}
+            onPress={() => setRoute("memory")}
           />
           <SettingsRow
             icon={Database}
             title="Privacy and retention"
             detail={`${settings.data?.retentionDays ?? 365}-day retention · export and deletion controls`}
+            onPress={() => setRoute("privacy")}
           />
           <SettingsRow
             icon={LockKeyhole}
             title="Security"
             detail="Secret scan, redaction, audit chain, and recent-auth policy"
+            onPress={() => setRoute("security")}
           />
         </Section>
 
@@ -303,11 +342,13 @@ export function SettingsScreen() {
             icon={Bell}
             title="Notifications"
             detail="Action requests, quiet hours, and duplicate suppression"
+            onPress={() => setRoute("notifications")}
           />
           <SettingsRow
             icon={RadioTower}
             title="Background operation"
             detail="Server tasks continue when this device is offline"
+            onPress={() => setRoute("notifications")}
           />
         </Section>
 
@@ -316,8 +357,14 @@ export function SettingsScreen() {
             icon={Code2}
             title="Custom integrations"
             detail="Generated adapters are sandboxed, tested, signed, and canaried"
+            onPress={() => setRoute("developer")}
           />
-          <SettingsRow icon={Blocks} title="Control plane" detail={signalApiBaseUrl} />
+          <SettingsRow
+            icon={Blocks}
+            title="Control plane"
+            detail={signalApiBaseUrl}
+            onPress={() => setRoute("developer")}
+          />
         </Section>
 
         <Section title="Emergency controls">
@@ -333,6 +380,7 @@ export function SettingsScreen() {
           Signal 0.1.0 · Every material action remains attributable and reviewable.
         </Text>
       </ScrollView>
+      <SettingsDetail route={route} onClose={() => setRoute(null)} />
     </View>
   );
 }

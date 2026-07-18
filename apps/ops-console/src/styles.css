@@ -26,6 +26,53 @@ a {
 button {
   cursor: pointer;
 }
+.sign-in-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.sign-in-card {
+  width: min(440px, 100%);
+  background: white;
+  border: 1px solid #dce5df;
+  border-radius: 18px;
+  padding: 30px;
+  box-shadow: 0 18px 60px rgb(7 26 32 / 10%);
+}
+.sign-in-card .brand {
+  width: max-content;
+  border-radius: 12px;
+  background: #071a20;
+  padding: 11px 14px;
+  margin-bottom: 28px;
+}
+.sign-in-card > p:not(.eyebrow) {
+  color: #60746f;
+  font-size: 13px;
+  line-height: 20px;
+}
+.sign-in-card > button {
+  width: 100%;
+  min-height: 46px;
+  border: 0;
+  border-radius: 11px;
+  background: #c8f15a;
+  color: #071a20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-weight: 800;
+}
+.sign-in-error {
+  border-radius: 9px;
+  background: #fbe6e4;
+  color: #a93636;
+  padding: 10px;
+  margin: 14px 0;
+  font-size: 11px;
+}
 .shell {
   min-height: 100vh;
   display: grid;
@@ -141,6 +188,13 @@ nav button.active {
   display: flex;
   align-items: center;
   gap: 9px;
+}
+.operator-signout {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: #c8f15a;
+  font-size: 9px;
 }
 .operator > span {
   width: 30px;
@@ -549,6 +603,84 @@ code {
 .error-panel p {
   margin: 0;
 }
+.section-panel,
+.section-grid {
+  margin-top: 24px;
+}
+.section-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.section-grid.incidents {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.record-list {
+  display: grid;
+  margin-top: 14px;
+}
+.record-list article {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 0;
+  border-bottom: 1px solid #edf1ee;
+}
+.record-list article:last-child {
+  border-bottom: 0;
+}
+.record-list article > div {
+  min-width: 0;
+}
+.record-list strong,
+.record-list small {
+  display: block;
+}
+.record-list strong {
+  font-size: 11px;
+}
+.record-list small {
+  color: #748680;
+  font-size: 9px;
+  line-height: 15px;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+}
+.record-list b {
+  color: #07564f;
+  font-size: 13px;
+}
+.record-list.compact article {
+  padding: 9px 0;
+}
+.large-number {
+  color: #07564f;
+  font-size: 44px;
+  font-weight: 800;
+  letter-spacing: -2px;
+  margin: 24px 0 3px;
+}
+.small-action,
+.maintenance {
+  border: 0;
+  border-radius: 8px;
+  background: #d9eee8;
+  color: #07564f;
+  padding: 7px 10px;
+  font-size: 9px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.small-action.danger {
+  background: #fbe6e4;
+  color: #a93636;
+}
+.maintenance {
+  margin-top: 18px;
+  min-height: 38px;
+}
 .error-panel h2 {
   font-size: 15px;
 }
@@ -587,7 +719,9 @@ code {
     grid-template-columns: 1fr 1fr;
   }
   .grid,
-  .grid.lower {
+  .grid.lower,
+  .section-grid,
+  .section-grid.incidents {
     grid-template-columns: 1fr;
   }
 }

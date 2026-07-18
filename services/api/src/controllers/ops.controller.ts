@@ -1,11 +1,14 @@
 import { Controller, Get, Inject, UseGuards } from "@nestjs/common";
 
 import { requireRole, type Principal } from "@signal/auth-sdk";
+import { isDemoMode } from "@signal/config";
 import type { TaskState } from "@signal/contracts";
 import type { SignalTaskService } from "@signal/task-service";
 
 import { RequestPrincipal, SignalAuthGuard } from "../auth.js";
 import { TASK_SERVICE } from "../tokens.js";
+import { OPERATIONS_CONTROL } from "../tokens.js";
+import type { OperationsControlService } from "../operations-control.js";
 
 const taskStates: readonly TaskState[] = [
   "CREATED",
@@ -25,19 +28,26 @@ const taskStates: readonly TaskState[] = [
 @UseGuards(SignalAuthGuard)
 @Controller("v1/ops")
 export class OpsController {
-  public constructor(@Inject(TASK_SERVICE) private readonly tasks: SignalTaskService) {}
+  public constructor(
+    @Inject(TASK_SERVICE) private readonly tasks: SignalTaskService,
+    @Inject(OPERATIONS_CONTROL) private readonly operations: OperationsControlService,
+  ) {}
 
   @Get("overview")
   public async overview(@RequestPrincipal() principal: Principal) {
     requireRole(principal, ["owner", "administrator", "auditor", "service_operator"]);
     const tasks = await this.tasks.listTasks(principal);
     const pendingActions = await this.tasks.listPendingActions(principal);
+    const [providerHealth, costs] = await Promise.all([
+      this.operations.providerHealth(principal),
+      this.operations.costSummary(principal),
+    ]);
     const byState = Object.fromEntries(
       taskStates.map((state) => [state, tasks.filter((task) => task.state === state).length]),
     );
     return {
       generatedAt: new Date().toISOString(),
-      mode: process.env["DEMO_MODE"] === "true" ? "local-development" : "control-plane",
+      mode: isDemoMode() ? "local-development" : "control-plane",
       taskCount: tasks.length,
       activeTaskCount: tasks.filter(
         (task) =>
@@ -45,30 +55,13 @@ export class OpsController {
       ).length,
       pendingActionCount: pendingActions.length,
       byState,
-      providers: [
-        {
-          name: "Meta Model API",
-          status:
-            process.env["META_MODEL_API_KEY"] === undefined
-              ? "not_configured"
-              : "configured_unprobed",
-        },
-        {
-          name: "Composio",
-          status:
-            process.env["COMPOSIO_API_KEY"] === undefined
-              ? "not_configured"
-              : "configured_unprobed",
-        },
-        {
-          name: "Temporal",
-          status:
-            process.env["TEMPORAL_ADDRESS"] === undefined
-              ? "not_configured"
-              : "configured_unprobed",
-        },
-      ],
-      policyBundle: { version: "signal-default-v1", status: "loaded" },
+      providers: providerHealth.map((provider) => ({
+        ...provider,
+        name: provider.provider,
+        status: provider.state,
+      })),
+      costs: costs.byProvider,
+      policyBundle: { version: "signal-default-v1+tenant-overlays", status: "loaded" },
     };
   }
 

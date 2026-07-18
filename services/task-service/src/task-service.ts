@@ -21,6 +21,7 @@ import { createConversationSchema, createMessageSchema } from "@signal/contracts
 import { assertTaskTransition, finalizeEvent, sha256 } from "@signal/event-sdk";
 
 import type { StoredActionResponse, TaskStore, TaskStoreData } from "./store.js";
+import type { ApprovalDirectory } from "./approval-directory.js";
 
 export type SignalClock = {
   now(): Date;
@@ -70,6 +71,7 @@ export type CreateActionInput = {
   risk: TaskRisk;
   options?: ActionRequest["options"];
   approverUserIds?: string[];
+  approvalThreshold?: number;
   requiresRecentAuth?: boolean;
   expiresAt: Date;
 };
@@ -81,6 +83,7 @@ export class SignalTaskService {
     private readonly store: TaskStore,
     private readonly clock: SignalClock = systemClock,
     private readonly ids: SignalIdFactory = randomIds,
+    private readonly approvalDirectory?: ApprovalDirectory,
   ) {
     this.#events.setMaxListeners(1_000);
   }
@@ -98,7 +101,7 @@ export class SignalTaskService {
       archivedAt: null,
     };
 
-    return this.store.runExclusive(principal.tenantId, (data) => {
+    return this.store.runExclusive(principal.tenantId, async (data) => {
       data.conversations.set(conversation.id, conversation);
       data.messages.set(conversation.id, []);
       data.conversationTasks.set(conversation.id, []);
@@ -242,7 +245,7 @@ export class SignalTaskService {
   }
 
   public async getTask(principal: Principal, taskId: string): Promise<Task> {
-    return this.store.runExclusive(principal.tenantId, (data) => {
+    return this.store.runExclusive(principal.tenantId, async (data) => {
       const task = this.requireTask(data, taskId);
       requireTenant(principal, task.tenantId);
       return task;
@@ -253,6 +256,32 @@ export class SignalTaskService {
     return this.store.runExclusive(principal.tenantId, (data) =>
       [...data.tasks.values()]
         .filter((task) => task.tenantId === principal.tenantId)
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    );
+  }
+
+  public async searchTasks(
+    principal: Principal,
+    query: string,
+    states: readonly TaskState[] = [],
+  ): Promise<readonly Task[]> {
+    const normalized = query.trim().toLocaleLowerCase();
+    return this.store.runExclusive(principal.tenantId, (data) =>
+      [...data.tasks.values()]
+        .filter((task) => task.tenantId === principal.tenantId)
+        .filter((task) => states.length === 0 || states.includes(task.state))
+        .filter((task) => {
+          if (normalized.length === 0) return true;
+          const conversation = data.conversations.get(task.conversationId);
+          const messages = data.messages.get(task.conversationId) ?? [];
+          return [
+            task.objective,
+            conversation?.title ?? "",
+            ...messages.flatMap((message) =>
+              message.content.flatMap((block) => ("text" in block ? [block.text] : [])),
+            ),
+          ].some((value) => value.toLocaleLowerCase().includes(normalized));
+        })
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
     );
   }
@@ -322,13 +351,33 @@ export class SignalTaskService {
     taskId: string,
     input: CreateActionInput,
   ): Promise<ActionRequest> {
-    return this.store.runExclusive(principal.tenantId, (data) => {
+    return this.store.runExclusive(principal.tenantId, async (data) => {
       const task = this.requireTask(data, taskId);
       requireTenant(principal, task.tenantId);
       if (input.expiresAt <= this.clock.now()) {
         throw new TaskConflictError("An action request must expire in the future.");
       }
       const now = this.clock.now().toISOString();
+      const approvalThreshold = input.approvalThreshold ?? 1;
+      if (!Number.isInteger(approvalThreshold) || approvalThreshold < 1 || approvalThreshold > 10) {
+        throw new TaskConflictError("The approval threshold must be between 1 and 10.");
+      }
+      const eligible =
+        input.approverUserIds ??
+        (approvalThreshold > 1 && this.approvalDirectory !== undefined
+          ? [
+              ...(await this.approvalDirectory.eligibleApproverUserIds(
+                principal.tenantId,
+                task.ownerUserId,
+              )),
+            ]
+          : [task.ownerUserId]);
+      const approverUserIds = [...new Set(eligible)];
+      if (approvalThreshold > approverUserIds.length) {
+        throw new TaskConflictError(
+          `This action requires ${approvalThreshold} distinct approvers, but only ${approverUserIds.length} eligible approver(s) are configured.`,
+        );
+      }
       const action: ActionRequest = {
         id: this.ids.next("act"),
         tenantId: task.tenantId,
@@ -353,7 +402,10 @@ export class SignalTaskService {
             destructive: true,
           },
         ],
-        approverUserIds: input.approverUserIds ?? [task.ownerUserId],
+        approverUserIds,
+        approvalThreshold,
+        approvedUserIds: [],
+        rejectedUserIds: [],
         state: "PENDING",
         requiresRecentAuth:
           input.requiresRecentAuth ?? (input.risk === "R3" || input.risk === "R4"),
@@ -375,6 +427,8 @@ export class SignalTaskService {
           risk: action.risk,
           expiresAt: action.expiresAt,
           materialDigest: action.materialDigest,
+          approvalThreshold: action.approvalThreshold,
+          approverUserIds: action.approverUserIds,
         },
         secretFields: [],
         evidenceIds: [],
@@ -440,11 +494,19 @@ export class SignalTaskService {
       if (input.materialDigest !== action.materialDigest) {
         throw new StaleActionError("The approved material terms do not match the pending action.");
       }
-      if (action.requiresRecentAuth && input.response === "APPROVE") {
+      if (
+        action.requiresRecentAuth &&
+        (input.response === "APPROVE" || input.response === "SUBMIT")
+      ) {
         requireRecentAuthentication(principal, this.clock.now(), 600);
       }
       if (input.response === "MODIFY" && input.modifiedPayload === undefined) {
         throw new TaskConflictError("A modified response must include the proposed changes.");
+      }
+
+      const priorResponses = data.responses.get(action.id) ?? [];
+      if (priorResponses.some((response) => response.userId === principal.userId)) {
+        throw new TaskConflictError("Each eligible user may respond to an approval only once.");
       }
 
       const respondedAt = this.clock.now().toISOString();
@@ -455,11 +517,30 @@ export class SignalTaskService {
         respondedAt,
         ...input,
       };
-      data.responses.set(action.id, [...(data.responses.get(action.id) ?? []), response]);
+      data.responses.set(action.id, [...priorResponses, response]);
+      const currentApprovedUserIds = action.approvedUserIds ?? [];
+      const currentRejectedUserIds = action.rejectedUserIds ?? [];
+      const approvalThreshold = action.approvalThreshold ?? 1;
+      const approvedUserIds =
+        input.response === "APPROVE" || input.response === "SUBMIT"
+          ? [...currentApprovedUserIds, principal.userId]
+          : currentApprovedUserIds;
+      const rejectedUserIds =
+        input.response === "REJECT"
+          ? [...currentRejectedUserIds, principal.userId]
+          : currentRejectedUserIds;
+      const terminal =
+        input.response === "REJECT" ||
+        input.response === "MODIFY" ||
+        input.response === "DEFER" ||
+        input.response === "MORE_INFORMATION" ||
+        approvedUserIds.length >= approvalThreshold;
       data.actions.set(action.id, {
         ...action,
-        state: "RESPONDED",
-        respondedAt,
+        approvedUserIds,
+        rejectedUserIds,
+        state: terminal ? "RESPONDED" : "PENDING",
+        respondedAt: terminal ? respondedAt : null,
       });
       this.appendEvent(data, {
         taskId: action.taskId,
@@ -474,12 +555,18 @@ export class SignalTaskService {
           actionRequestId: action.id,
           response: input.response,
           materialDigest: input.materialDigest,
+          approvalsCollected: approvedUserIds.length,
+          approvalThreshold,
         },
         secretFields: [],
         evidenceIds: [],
       });
       const task = this.requireTask(data, action.taskId);
-      if (input.response === "APPROVE" && task.state === "WAITING_USER") {
+      if (
+        (input.response === "APPROVE" || input.response === "SUBMIT") &&
+        approvedUserIds.length >= approvalThreshold &&
+        task.state === "WAITING_USER"
+      ) {
         this.transitionInStore(data, action.taskId, "RUNNING", {
           type: "workflow",
           id: task.workflowId,

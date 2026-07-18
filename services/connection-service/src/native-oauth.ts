@@ -1,6 +1,6 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
-type PendingAuthorization = {
+export type PendingAuthorization = {
   tenantId: string;
   userId: string;
   provider: string;
@@ -23,6 +23,7 @@ export type NativeOAuthStart = {
   scopes: readonly string[];
   originatingTaskId?: string;
   returnDeepLink: string;
+  authorizationParams?: Readonly<Record<string, string>>;
 };
 
 export type NativeOAuthCallback = {
@@ -51,13 +52,14 @@ export class NativeOAuthProvider {
     authorizationUrl: string;
     state: string;
     expiresAt: string;
+    pending: Omit<PendingAuthorization, "consumed">;
   } {
-    const stateId = base64Url(randomBytes(24));
+    const state = this.issueState(input.tenantId);
+    const [stateId] = state.split(".");
+    if (stateId === undefined) throw new Error("OAuth state generation failed.");
     const verifier = base64Url(randomBytes(48));
     const nonce = base64Url(randomBytes(24));
     const expiresAt = new Date(now.getTime() + 10 * 60 * 1_000);
-    const signature = this.sign(stateId);
-    const state = `${stateId}.${signature}`;
     this.#pending.set(stateId, {
       tenantId: input.tenantId,
       userId: input.userId,
@@ -85,19 +87,37 @@ export class NativeOAuthProvider {
       "code_challenge",
       base64Url(createHash("sha256").update(verifier).digest()),
     );
-    return { authorizationUrl: url.toString(), state, expiresAt: expiresAt.toISOString() };
+    for (const [key, value] of Object.entries(input.authorizationParams ?? {})) {
+      url.searchParams.set(key, value);
+    }
+    const pending = this.#pending.get(stateId);
+    if (pending === undefined) throw new Error("OAuth authorization state was not retained.");
+    const { consumed: _consumed, ...persistable } = pending;
+    return {
+      authorizationUrl: url.toString(),
+      state,
+      expiresAt: expiresAt.toISOString(),
+      pending: persistable,
+    };
+  }
+
+  public issueState(tenantId: string): string {
+    const stateId = `${tenantId}~${base64Url(randomBytes(24))}`;
+    return `${stateId}.${this.sign(stateId)}`;
   }
 
   public consume(
     callback: NativeOAuthCallback,
     now = new Date(),
+    persisted?: Omit<PendingAuthorization, "consumed">,
   ): Omit<PendingAuthorization, "consumed"> {
     const [stateId, signature, extra] = callback.state.split(".");
     if (stateId === undefined || signature === undefined || extra !== undefined) {
       throw new Error("Invalid OAuth state.");
     }
     this.verify(stateId, signature);
-    const pending = this.#pending.get(stateId);
+    const retained = this.#pending.get(stateId);
+    const pending = persisted === undefined ? retained : { ...persisted, consumed: false };
     if (pending === undefined || pending.consumed) {
       throw new Error("OAuth state is unknown or was already used.");
     }
@@ -107,9 +127,21 @@ export class NativeOAuthProvider {
     if (callback.redirectUri !== pending.redirectUri) {
       throw new Error("OAuth redirect URI does not match the original request.");
     }
-    this.#pending.set(stateId, { ...pending, consumed: true });
+    if (retained !== undefined) this.#pending.set(stateId, { ...pending, consumed: true });
     const { consumed: _consumed, ...safe } = pending;
     return safe;
+  }
+
+  public tenantId(state: string): string {
+    const [stateId, signature, extra] = state.split(".");
+    if (stateId === undefined || signature === undefined || extra !== undefined) {
+      throw new Error("Invalid OAuth state.");
+    }
+    this.verify(stateId, signature);
+    const separator = stateId.indexOf("~");
+    const tenantId = separator < 0 ? "" : stateId.slice(0, separator);
+    if (!/^ten_[a-zA-Z0-9_-]+$/.test(tenantId)) throw new Error("Invalid OAuth tenant state.");
+    return tenantId;
   }
 
   private sign(stateId: string): string {

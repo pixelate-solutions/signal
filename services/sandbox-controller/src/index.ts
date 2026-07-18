@@ -1,5 +1,11 @@
 import { execFile } from "node:child_process";
 import { createHmac, randomUUID } from "node:crypto";
+import {
+  GetPublicKeyCommand,
+  KMSClient,
+  SignCommand,
+  type KMSClientConfig,
+} from "@aws-sdk/client-kms";
 import { relative, resolve } from "node:path";
 import { promisify } from "node:util";
 
@@ -21,6 +27,17 @@ export const sandboxJobSchema = z
       .max(30 * 60_000),
     networkMode: z.enum(["none", "provider-sandbox-proxy"]),
     egressDomains: z.array(z.string().min(1)).max(50),
+    files: z
+      .array(
+        z
+          .object({
+            path: z.string().min(1).max(1_000),
+            contentBase64: z.string().max(10 * 1024 * 1024),
+          })
+          .strict(),
+      )
+      .max(500)
+      .optional(),
   })
   .strict();
 
@@ -35,6 +52,59 @@ export type SandboxResult = {
 export interface CodeSandboxProvider {
   run(job: SandboxJob): Promise<SandboxResult>;
 }
+
+export class RemoteSandboxProvider implements CodeSandboxProvider {
+  public constructor(
+    private readonly endpoint: string,
+    private readonly serviceToken: string,
+    private readonly fetcher: typeof fetch = fetch,
+  ) {}
+
+  public async run(rawJob: SandboxJob): Promise<SandboxResult> {
+    const job = sandboxJobSchema.parse(rawJob);
+    const body = JSON.stringify(job);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const response = await this.fetcher(`${this.endpoint.replace(/\/$/, "")}/v1/execute`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${this.serviceToken}`,
+          "content-type": "application/json",
+        },
+        body,
+        signal: AbortSignal.timeout(job.timeoutMs + 180_000),
+      });
+      if (response.ok) return (await response.json()) as SandboxResult;
+      if (response.status !== 429 || attempt === 4) {
+        throw new Error(`Isolated sandbox executor returned HTTP ${response.status}.`);
+      }
+      const retrySeconds = Math.min(
+        5,
+        Math.max(1, Number(response.headers.get("retry-after") ?? 1)),
+      );
+      await new Promise((resolve) => setTimeout(resolve, retrySeconds * 1_000));
+    }
+    throw new Error("Isolated sandbox executor queue did not become available.");
+  }
+}
+
+export const capabilityGapSchema = z
+  .object({
+    requiredAction: z.string().min(1).max(500),
+    minimalInputs: z.record(z.string(), z.unknown()),
+    expectedOutput: z.record(z.string(), z.unknown()),
+    provider: z.string().regex(/^[a-z][a-z0-9-]{1,62}$/),
+    providerDomain: z.string().min(3).max(253),
+    authMethod: z.enum(["oauth2", "api_key", "basic", "none"]),
+    scopes: z.array(z.string().min(1).max(500)).max(100),
+    riskClass: z.enum(["R0", "R1", "R2", "R3", "R4"]),
+    sideEffect: z.enum(["none", "reversible", "external", "financial", "irreversible"]),
+    idempotency: z.enum(["none", "provider_key", "state_check", "read_only"]),
+    successEvidence: z.string().min(1).max(2_000),
+    documentationUrls: z.array(z.url()).max(20).default([]),
+  })
+  .strict();
+
+export type CapabilityGap = z.infer<typeof capabilityGapSchema>;
 
 export class DockerSandboxProvider implements CodeSandboxProvider {
   public constructor(
@@ -146,17 +216,69 @@ export function assertGeneratedChangesScoped(paths: readonly string[]): void {
   }
 }
 
-export class AdapterSigner {
+export type AdapterSignature = {
+  digest: string;
+  signature: string;
+  algorithm: "HMAC_SHA_256" | "RSASSA_PSS_SHA_256";
+  keyId: string;
+  publicKey: string | null;
+};
+
+export type AdapterSigningIdentity = {
+  sign(manifest: Record<string, unknown>): Promise<AdapterSignature>;
+};
+
+export class AdapterSigner implements AdapterSigningIdentity {
   public constructor(private readonly signingKey: Uint8Array) {
     if (signingKey.byteLength < 32)
       throw new Error("Adapter signing key must be at least 32 bytes.");
   }
 
-  public sign(manifest: Record<string, unknown>): { digest: string; signature: string } {
+  public async sign(manifest: Record<string, unknown>): Promise<AdapterSignature> {
     const material = canonicalJson(manifest);
     return {
       digest: sha256(manifest),
       signature: createHmac("sha256", this.signingKey).update(material).digest("base64url"),
+      algorithm: "HMAC_SHA_256",
+      keyId: "local-development",
+      publicKey: null,
+    };
+  }
+}
+
+export class AwsKmsAdapterSigner implements AdapterSigningIdentity {
+  readonly #client: KMSClient;
+
+  public constructor(
+    private readonly keyId: string,
+    config: KMSClientConfig = {},
+  ) {
+    this.#client = new KMSClient(config);
+  }
+
+  public async sign(manifest: Record<string, unknown>): Promise<AdapterSignature> {
+    const digestValue = sha256(manifest);
+    const digestBytes = Buffer.from(digestValue.slice("sha256:".length), "hex");
+    const [signed, publicKey] = await Promise.all([
+      this.#client.send(
+        new SignCommand({
+          KeyId: this.keyId,
+          Message: digestBytes,
+          MessageType: "DIGEST",
+          SigningAlgorithm: "RSASSA_PSS_SHA_256",
+        }),
+      ),
+      this.#client.send(new GetPublicKeyCommand({ KeyId: this.keyId })),
+    ]);
+    if (signed.Signature === undefined || publicKey.PublicKey === undefined) {
+      throw new Error("KMS signing identity did not return a signature and public key.");
+    }
+    return {
+      digest: digestValue,
+      signature: Buffer.from(signed.Signature).toString("base64url"),
+      algorithm: "RSASSA_PSS_SHA_256",
+      keyId: signed.KeyId ?? this.keyId,
+      publicKey: Buffer.from(publicKey.PublicKey).toString("base64"),
     };
   }
 }

@@ -21,6 +21,11 @@ export const principalSchema = z
     authenticatedAt: utcTimestampSchema,
     expiresAt: utcTimestampSchema,
     deviceId: z.string().min(8).max(500).nullable(),
+    delegatedUserId: userIdSchema.optional(),
+    supportGrantId: z
+      .string()
+      .regex(/^sag_[a-zA-Z0-9_-]{8,}$/)
+      .optional(),
   })
   .strict();
 

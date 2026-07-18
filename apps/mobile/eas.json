@@ -1,0 +1,29 @@
+{
+  "cli": { "version": ">= 16.0.0", "appVersionSource": "remote" },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "environment": "development"
+    },
+    "preview": {
+      "distribution": "internal",
+      "environment": "preview"
+    },
+    "production": {
+      "autoIncrement": true,
+      "environment": "production",
+      "env": { "EXPO_PUBLIC_APP_VARIANT": "consumer" }
+    },
+    "enterprise": {
+      "extends": "production",
+      "distribution": "internal",
+      "env": { "EXPO_PUBLIC_APP_VARIANT": "managed_enterprise" },
+      "ios": { "enterpriseProvisioning": "universal" }
+    }
+  },
+  "submit": {
+    "production": {},
+    "enterprise": {}
+  }
+}

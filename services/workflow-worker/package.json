@@ -18,16 +18,37 @@
   "scripts": {
     "build": "tsc -b",
     "clean": "tsc -b --clean",
-    "dev": "tsx watch src/worker.ts",
-    "start": "node dist/local.js",
+    "dev": "tsx watch src/production.ts",
+    "start": "node dist/production.js",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run --exclude 'dist/**'"
   },
   "dependencies": {
+    "@aws-sdk/client-kms": "^3.1090.0",
+    "@signal/agent-worker": "workspace:*",
+    "@signal/artifact-service": "workspace:*",
+    "@signal/browser-worker": "workspace:*",
+    "@signal/auth-sdk": "workspace:*",
+    "@signal/connection-service": "workspace:*",
+    "@signal/config": "workspace:*",
     "@signal/contracts": "workspace:*",
+    "@signal/event-sdk": "workspace:*",
+    "@signal/integration-github": "workspace:*",
+    "@signal/integration-google": "workspace:*",
+    "@signal/integration-test-state": "workspace:*",
+    "@signal/memory-service": "workspace:*",
+    "@signal/memory-sdk": "workspace:*",
+    "@signal/model-gateway": "workspace:*",
+    "@signal/notification-service": "workspace:*",
+    "@signal/persistence": "workspace:*",
+    "@signal/policy-client": "workspace:*",
+    "@signal/task-service": "workspace:*",
+    "@signal/tool-gateway": "workspace:*",
+    "@signal/tool-sdk": "workspace:*",
     "@temporalio/activity": "^1.20.3",
     "@temporalio/client": "^1.20.3",
     "@temporalio/worker": "^1.20.3",
-    "@temporalio/workflow": "^1.20.3"
+    "@temporalio/workflow": "^1.20.3",
+    "google-auth-library": "^10.9.0"
   }
 }

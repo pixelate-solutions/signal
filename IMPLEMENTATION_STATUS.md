@@ -1,73 +1,44 @@
 # Signal implementation status
 
-Last verified: 2026-07-18
+Last source verification: 2026-07-18
 
-## Delivery status
+## Outcome
 
-The Signal V1 reference implementation is complete and runnable locally. It includes the two-destination mobile experience, an isolated operations console, tenant-scoped durable task state, append-only execution events, digest-bound approvals, independent verification, governed tools/connections/memory/artifacts, isolated browser and sandbox workers, document processing, policy, observability, and deployment assets.
+The production V1 source implementation is complete. Signal now has a durable Temporal execution path, bounded Meta-backed agent runtime, native and Composio integrations, tenant-scoped PostgreSQL/S3 persistence, OIDC account lifecycle, encrypted credentials, mobile action and settings surfaces, platform push, governed memory and artifacts, an isolated browser operator, safe generated-capability lifecycle, device command delivery, policy/audit operations, and deployable AWS/EKS infrastructure.
 
-The local stack is an acceptance and development baseline, not a claim that operator-owned production integrations have been commissioned. Production rollout still requires the credentials, managed services, provider reviews, and staging evidence listed below.
+This statement covers the repository. It does not claim that Pixelate Solutions' operator-owned cloud accounts, domains, OAuth applications, model access, mobile store records, or production data plane have already been commissioned. Those actions cannot be represented truthfully by source code and are listed in the [production commissioning runbook](docs/runbooks/production-commissioning.md).
 
-## Architecture summary
+## Production V1 closure matrix
 
-Signal separates the mobile cockpit, public API, task service, durable workflow, agent runtime, tool gateway, credential/connection service, browser worker, sandbox controller, and document worker. PostgreSQL stores tenant-scoped task runtime state; Temporal is provisioned for durable workflows; Redis is nonauthoritative fan-out. Deterministic code owns authorization, execution, and verification. User-visible progress is rendered from monotonic, digest-chained events.
+| Area                             | Implemented production path                                                                                                                                                                                                                                                          | Remaining launch action                                                                                                                                                                                                     |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Core agent runtime               | API task start/control signals Temporal; production activities assemble the bounded agent, Meta model, policy router, native/Composio/browser/device/generated tools, verification, checkpointing, and task completion.                                                              | Commission Temporal and Meta credentials; pass staging task scenarios.                                                                                                                                                      |
+| Identity and accounts            | OIDC bearer validation, mobile PKCE sign-up/sign-in/refresh/recovery and step-up, passkey-ready provider flow, session/device revocation, organizations/invitations, export, and deletion are implemented.                                                                           | Configure the production OIDC tenant, clients, email domain, passkeys, and recovery policy.                                                                                                                                 |
+| Durable persistence              | Tasks plus connections, encrypted credentials, memory/vectors, artifacts, settings, devices, push deliveries, policies, evidence, audit, tool idempotency, browser sessions, and generated capability state use PostgreSQL and S3 in non-test deployments.                           | Apply migrations and validate backup/restore in each environment.                                                                                                                                                           |
+| Model, OAuth, and integrations   | Meta, Google, GitHub, and Composio are assembled in production; OAuth state/PKCE, exchange, refresh, revocation, reauthentication cleanup, KMS envelope encryption, health monitoring, pinned tool registration, cost and staging gates are present.                                 | Create provider applications, complete required reviews, and link staging accounts.                                                                                                                                         |
+| Mobile product                   | Chat search, upload/scan/share/voice, secure action cards, OAuth cards, approvals, receipts, artifact/browser review, complete Settings detail flows, account/security/privacy/developer controls, and biometric app lock are implemented.                                           | Configure EAS/store identities, signing, privacy listings, screenshots, and review submissions.                                                                                                                             |
+| Push and deep links              | Native APNs/FCM token registration, encrypted token handles, durable delivery/retry records, notification listeners, background registration, and exact action/task routing are implemented.                                                                                         | Provision APNs/FCM credentials and validate foreground/background/terminated/offline-return cases on physical devices.                                                                                                      |
+| Memory and multimodal            | Durable scoped memory/vectors, extraction/retrieval, proposal confirmation, conflict/correction/deletion controls, cross-file citations, OCR, chart/Office/PDF/archive processing, transcription/video frames, and versioned document/workbook edits are implemented.                | Commission the transcription endpoint and run the private representative corpus.                                                                                                                                            |
+| Browser operator                 | Credential-broker injection, KMS-encrypted profiles, durable sessions/events, authenticated evidence snapshots, observed/takeover event streaming, MFA continuation, SSRF/egress controls, and artifact upload/download are implemented.                                             | Run provider-specific staging fixtures and confirm the approved-domain egress list. Low-latency arbitrary remote cursor control remains the FRD's P1/V1.1 mode; V1 takeover is review, secure input, and resumable control. |
+| Safe self-extension              | Official OpenAPI discovery, typed generation, isolated sandbox stages, persistent registry, code/test/diff approval UI, KMS signing, tenant canary activation, rollback, and original-step resumption are implemented.                                                               | Supply isolated canary accounts/endpoints and approve protected GitHub environments.                                                                                                                                        |
+| Device executor                  | Durable signed/expiring commands, push delivery, workflow continuation, permissions, background listeners, reviewed iOS/Android handlers, and separate managed-enterprise EAS flavor are implemented.                                                                                | Exercise the platform capability matrix on signed physical-device builds; commission any optional Home/Matter provider.                                                                                                     |
+| Policy, evidence, and operations | Stored user/org policy with precedence, limits and multi-party approvals; durable evidence/audit; export, retention, deletion/legal hold; JIT support; feature flags; provider health/routing; and cost attribution are implemented.                                                 | Enter operator policy, support, retention, alert, and budget values and run incident drills.                                                                                                                                |
+| Production environment           | Remote-state bootstrap, multi-account environment roots, EKS/RDS/Redis/S3/KMS/WAF/DNS/TLS, workload identity, isolated Fargate, ARC deploy runners, autoscaling, observability, backup/restore testing, cross-region storage, Helm, and immutable release promotion are implemented. | Run the reviewed plan/apply with Pixelate's AWS/DNS credentials, then commission staging and production.                                                                                                                    |
 
-## Verified gates
+## Verification gates
 
-The following completed successfully on the repository state dated above:
-
-| Gate                                                           | Result                                                                                 |
-| -------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| Prettier, ESLint, protected-boundary checks                    | Passed                                                                                 |
-| TypeScript strict typecheck                                    | Passed across all workspace targets                                                    |
-| TypeScript unit, contract, failure, tenant, and scenario tests | Passed                                                                                 |
-| Production builds, including Expo web and operations console   | Passed                                                                                 |
-| Python Ruff formatting/lint, mypy, and document corpus tests   | Passed                                                                                 |
-| PostgreSQL migration, seed, guarded rollback, reapply          | Passed on an isolated database                                                         |
-| PostgreSQL task-store restart and concurrency integration      | Passed against the live Compose database                                               |
-| ClamAV clean-file and EICAR integration                        | Passed against the live Compose scanner                                                |
-| OPA policy tests                                               | Passed                                                                                 |
-| Docker Compose validation and full-stack health                | Passed                                                                                 |
-| Package-scoped production container builds                     | Passed; development workspace and toolchain excluded from Node runtime images          |
-| Helm lint/template and Terraform format/init/validate          | Passed                                                                                 |
-| Secret scan and production dependency audit                    | Passed                                                                                 |
-| Live UI/API restart exercise                                   | Passed: approval resumed after API replacement and completed with independent evidence |
-
-Reproduce the aggregate portable gate with:
+The portable aggregate gate is:
 
 ```bash
 cp .env.example .env
 pnpm install
 pnpm test:all
-docker compose up --build --detach --wait
 ```
 
-## Phase status
+CI additionally validates strict rendered Kubernetes manifests, shell scripts, Dockerfiles, pinned release images, staging provider health, and protected production promotion. The detailed mandatory-scenario mapping is in [acceptance scenarios](docs/acceptance-scenarios.md).
 
-| Phase                                 | Reference deliverable                                                                                                        | Status                                                          |
-| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| 0 — Repository and architecture       | Strict monorepo, contracts, RLS schema, threat model, ADRs, runbooks, CI, local infrastructure                               | Complete                                                        |
-| 1 — Durable chat vertical slice       | Chat/Settings, PostgreSQL task state, ordered event replay, approval, restart recovery, read/write/verify receipt            | Complete                                                        |
-| 2 — Model, policy, tools, connections | Provider-neutral model contract, Meta adapter, OPA policy, leases, idempotency, OAuth/Composio boundaries                    | Complete locally; production credentials required               |
-| 3 — Memory and artifacts              | Provenance, scope, correction/deletion, quarantined upload, ClamAV, multimodal document worker, versioned evidence           | Complete locally                                                |
-| 4 — Browser and notifications         | Isolated browser policy, takeover states, digest-bound final submit, deep-linked durable development push                    | Complete against local fixtures                                 |
-| 5 — Safe self-extension               | Generated-only boundary, failed-test repair, full gates, signed release workflow, canary and rollback contract               | Complete; external canary executor required for release         |
-| 6 — Device executor                   | Signed, expiring, replay-protected commands and honest unsupported capability results                                        | Complete                                                        |
-| 7 — Production hardening              | Ops metadata view, OpenTelemetry, SLO rules, scoped runtime images, Compose, Helm, AWS Terraform, backup/DR, CI/CD, runbooks | Deployment baseline complete; environment commissioning remains |
+The 2026-07-18 release candidate passed the complete aggregate gate: 57 workspace test tasks, all TypeScript type/lint/build gates, mobile web export, the operations console production build, secret scanning, 14 document-worker tests under strict Ruff/mypy checks, OPA 10/10, Compose validation, Helm lint, and Terraform 1.12.2 initialization/validation. Production dependencies reported no known high-severity vulnerabilities. Rendered Kubernetes manifests also passed strict kubeconform validation for development (45 resources), staging (60), and production (60).
 
-The detailed evidence mapping for mandatory scenarios A–J is in [`docs/acceptance-scenarios.md`](docs/acceptance-scenarios.md).
+## Deliberate environment boundary
 
-## Production qualifications
-
-The following boundaries are deliberate and must be replaced or commissioned before a public production launch:
-
-- The local demonstration is driven by a deterministic in-process runtime. The Temporal workflow and worker are built and deployed, but production task submission must be wired to the Temporal client rather than the demo runtime.
-- Task state is durable in PostgreSQL. Connection, memory, and artifact service repositories use local in-process adapters; production needs PostgreSQL-backed repositories and S3/MinIO-backed object bytes before horizontal scaling.
-- The browser scenario is verified against an isolated local fixture. Production needs an interactive takeover channel, per-tenant encrypted browser-profile storage, approved egress policy, and staging-provider evidence.
-- Generated-capability CI packages and attests candidates, but promotion intentionally fails closed until an operator supplies the isolated canary endpoint and environment approvals.
-- Local identity, email, push, model, OAuth, and provider fixtures are deterministic. They do not represent a successful real provider action.
-- Terraform and Helm are validated reference deployments. A production plan/apply, regional recovery drill, load test, mobile store signing/review, and provider policy review remain environment-specific release gates.
-
-## External launch inputs
-
-Production Meta Model API, OIDC, Composio, Google OAuth, APNs/FCM, KMS, DNS/TLS, workload identity, Temporal, cloud, Apple, and Google Play credentials are operator-owned inputs. The staging generated-capability canary URL/token and protected GitHub environments are also required. Local deterministic providers remain available without them and never report external success.
+No placeholder credential is treated as success. Missing production integrations fail closed with `CONNECTION_REQUIRED` or an unhealthy readiness/provider gate. A public launch is complete only after every signed-off item in the [production commissioning runbook](docs/runbooks/production-commissioning.md) has evidence attached.

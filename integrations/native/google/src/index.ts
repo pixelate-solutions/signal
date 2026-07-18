@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 
 import type { ToolAdapter, ToolRegistry } from "@signal/tool-sdk";
 
-export type GoogleCredentialResolver = (connectionId: string) => Promise<string>;
+export type GoogleCredentialResolver = (
+  connectionId: string,
+  context: { tenantId: string; taskId: string; adapter: string },
+) => Promise<string>;
 
 const evidenceId = (value: unknown) =>
   `evd_${createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 24)}`;
@@ -45,7 +48,11 @@ export function createGoogleAdapters(
     execute: async (input, context, cancellation) => {
       if (context.connectionId === null)
         throw new Error("CONNECTION_REQUIRED: Google connection required.");
-      const token = await credentials(context.connectionId);
+      const token = await credentials(context.connectionId, {
+        tenantId: context.tenantId,
+        taskId: context.taskId,
+        adapter: "google.gmail.list_messages",
+      });
       const url = new URL("https://gmail.googleapis.com/gmail/v1/users/me/messages");
       const query = typeof input["query"] === "string" ? input["query"] : "";
       const maxResults = typeof input["maxResults"] === "number" ? input["maxResults"] : 25;
@@ -84,6 +91,29 @@ export function createGoogleAdapters(
         usage: { durationMs: 0, costMinor: 0, currency: "USD" },
       };
     },
+    verify: async (_input, result) => {
+      const data = result.data;
+      const passed =
+        result.status === "SUCCEEDED" &&
+        result.provider.statusCode !== undefined &&
+        result.provider.statusCode >= 200 &&
+        result.provider.statusCode < 300 &&
+        data !== null &&
+        typeof data === "object" &&
+        Array.isArray((data as { messages?: unknown }).messages) &&
+        result.evidenceIds.length > 0;
+      return {
+        ...result,
+        status: passed ? "SUCCEEDED" : "FAILED",
+        sanitizedMessage: passed
+          ? result.sanitizedMessage
+          : "Gmail provider response evidence was incomplete; results were not claimed.",
+        errorClass: passed ? "none" : "unknown",
+        verificationHint: passed
+          ? "Verified from the authenticated Gmail provider response and retained digest."
+          : "Repeat the read before using these results.",
+      };
+    },
   };
 
   const calendarUpsert: ToolAdapter = {
@@ -119,7 +149,11 @@ export function createGoogleAdapters(
     execute: async (input, context, cancellation) => {
       if (context.connectionId === null)
         throw new Error("CONNECTION_REQUIRED: Google connection required.");
-      const token = await credentials(context.connectionId);
+      const token = await credentials(context.connectionId, {
+        tenantId: context.tenantId,
+        taskId: context.taskId,
+        adapter: "google.calendar.upsert_event",
+      });
       const id = eventId(context.idempotencyKey);
       const calendarId = encodeURIComponent(String(input["calendarId"]));
       const url = `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events`;
@@ -197,7 +231,11 @@ export function createGoogleAdapters(
       }
       const id = String((result.data as { id?: unknown }).id);
       const calendarId = encodeURIComponent(String(input["calendarId"]));
-      const token = await credentials(context.connectionId);
+      const token = await credentials(context.connectionId, {
+        tenantId: context.tenantId,
+        taskId: context.taskId,
+        adapter: "google.calendar.upsert_event.verify",
+      });
       const response = await fetcher(
         `https://www.googleapis.com/calendar/v3/calendars/${calendarId}/events/${encodeURIComponent(id)}`,
         { headers: { authorization: `Bearer ${token}` }, signal: cancellation.signal },

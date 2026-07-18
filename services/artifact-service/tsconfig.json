@@ -5,5 +5,6 @@
     "rootDir": "src",
     "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
+  "references": [{ "path": "../../packages/persistence" }],
   "include": ["src/**/*.ts"]
 }

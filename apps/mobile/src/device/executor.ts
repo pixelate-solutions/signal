@@ -5,6 +5,7 @@ import * as Contacts from "expo-contacts/next";
 import * as Crypto from "expo-crypto";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
+import * as IntentLauncher from "expo-intent-launcher";
 import * as Linking from "expo-linking";
 import * as LocalAuthentication from "expo-local-authentication";
 import * as Location from "expo-location";
@@ -19,6 +20,8 @@ import {
   type DeviceCommand,
   type DeviceCommandResult,
 } from "@signal/contracts";
+
+import { reviewedAndroidIntent, reviewedAppIntentUrl } from "./intent-policy";
 
 const DEVICE_SECRET_KEY = "signal.device.signing-secret";
 const DEVICE_PUBLIC_KEY = "signal.device.signing-public";
@@ -148,14 +151,45 @@ async function perform(command: DeviceCommand): Promise<{
   const payload = command.payload;
   switch (command.actionType) {
     case "open_url":
-    case "app_intent":
-    case "android_intent": {
-      const url = stringField(payload, "url");
-      if (!/^(https?:|[a-z][a-z0-9+.-]*:)/i.test(url) || !(await Linking.canOpenURL(url))) {
+    case "app_intent": {
+      let url: string;
+      try {
+        url = reviewedAppIntentUrl(stringField(payload, "url"));
+      } catch (error) {
+        return {
+          status: "UNSUPPORTED",
+          result: {
+            reason: error instanceof Error ? error.message : "Undeclared app integration.",
+          },
+        };
+      }
+      if (!(await Linking.canOpenURL(url))) {
         return { status: "UNSUPPORTED", result: { reason: "No declared handler is available." } };
       }
       await Linking.openURL(url);
       return { status: "SUCCEEDED", result: { opened: true, scheme: url.split(":")[0] } };
+    }
+    case "android_intent": {
+      if (Platform.OS !== "android") {
+        return { status: "UNSUPPORTED", result: { reason: "Android intent requires Android." } };
+      }
+      let intent: ReturnType<typeof reviewedAndroidIntent>;
+      try {
+        intent = reviewedAndroidIntent({
+          action: stringField(payload, "action", "android.intent.action.VIEW"),
+          url: stringField(payload, "url"),
+          managedEnterprise: process.env.EXPO_PUBLIC_APP_VARIANT === "managed_enterprise",
+        });
+      } catch (error) {
+        return {
+          status: "UNSUPPORTED",
+          result: { reason: error instanceof Error ? error.message : "Undeclared Android intent." },
+        };
+      }
+      await IntentLauncher.startActivityAsync(intent.action, {
+        ...(intent.data === undefined ? {} : { data: intent.data }),
+      });
+      return { status: "SUCCEEDED", result: { opened: true, action: intent.action } };
     }
     case "select_contact": {
       const permission = await Contacts.requestPermissionsAsync();

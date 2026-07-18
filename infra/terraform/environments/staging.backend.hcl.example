@@ -1,0 +1,6 @@
+bucket         = "signal-terraform-state-123456789012-us-east-2"
+key            = "environments/staging/terraform.tfstate"
+region         = "us-east-2"
+kms_key_id     = "alias/signal-terraform-state"
+encrypt        = true
+use_lockfile   = true

@@ -5,8 +5,8 @@ import type { Principal } from "@signal/auth-sdk";
 import type { SignalTaskService } from "@signal/task-service";
 
 import { RequestPrincipal, SignalAuthGuard } from "../auth.js";
-import type { DemoTaskRuntime } from "../demo-runtime.js";
-import { DEMO_RUNTIME, TASK_SERVICE } from "../tokens.js";
+import type { TaskRuntime } from "../task-runtime.js";
+import { TASK_RUNTIME, TASK_SERVICE } from "../tokens.js";
 
 @ApiTags("conversations")
 @ApiBearerAuth()
@@ -15,7 +15,7 @@ import { DEMO_RUNTIME, TASK_SERVICE } from "../tokens.js";
 export class ConversationsController {
   public constructor(
     @Inject(TASK_SERVICE) private readonly tasks: SignalTaskService,
-    @Inject(DEMO_RUNTIME) private readonly demo: DemoTaskRuntime,
+    @Inject(TASK_RUNTIME) private readonly runtime: TaskRuntime,
   ) {}
 
   @Post()
@@ -45,9 +45,7 @@ export class ConversationsController {
     @Body() body: unknown,
   ) {
     const result = await this.tasks.sendMessage(principal, id, body, idempotencyKey ?? "");
-    if (!result.replayed && process.env["DEMO_MODE"] === "true") {
-      this.demo.start(principal, result.task);
-    }
+    if (!result.replayed) await this.runtime.start(principal, result.task);
     return result;
   }
 }

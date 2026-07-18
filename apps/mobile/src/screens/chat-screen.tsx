@@ -8,10 +8,11 @@ import {
   Plus,
   Radio,
   RefreshCw,
+  Search,
   ShieldAlert,
   X,
 } from "lucide-react-native";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -20,6 +21,7 @@ import {
   RefreshControl,
   ScrollView,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -30,10 +32,12 @@ import { signalColors, signalRadius, signalSpacing } from "@signal/ui";
 import { signalApi } from "../api/client";
 import { uploadAttachment, type LocalAttachment } from "../api/upload";
 import { ActionCard } from "../components/action-card";
+import { ArtifactCard } from "../components/artifact-card";
 import { BrandMark } from "../components/brand-mark";
 import { Composer } from "../components/composer";
 import { TaskEventCard } from "../components/event-card";
 import { TaskHeader } from "../components/task-header";
+import { ReceiptCard } from "../components/receipt-card";
 import { useTaskReconnect } from "../hooks/use-task-reconnect";
 import { useSignalStore } from "../state/use-signal-store";
 
@@ -44,6 +48,23 @@ function HistorySheet({ conversations }: { conversations: Conversation[] }) {
   const setOpen = useSignalStore((state) => state.setHistoryOpen);
   const setConversation = useSignalStore((state) => state.setActiveConversation);
   const setTask = useSignalStore((state) => state.setActiveTask);
+  const [search, setSearch] = useState("");
+  const matchingTasks = useQuery({
+    queryKey: ["task-search", search],
+    queryFn: () => signalApi.searchTasks(search),
+    enabled: search.trim().length > 0,
+  });
+  const matchingConversationIds = new Set(
+    (matchingTasks.data?.items ?? []).map((task) => task.conversationId),
+  );
+  const filteredConversations =
+    search.trim().length === 0
+      ? conversations
+      : conversations.filter(
+          (conversation) =>
+            conversation.title.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()) ||
+            matchingConversationIds.has(conversation.id),
+        );
   return (
     <Modal visible={open} animationType="slide" transparent onRequestClose={() => setOpen(false)}>
       <Pressable
@@ -87,6 +108,30 @@ function HistorySheet({ conversations }: { conversations: Conversation[] }) {
               <X color={signalColors.ink} />
             </Pressable>
           </View>
+          <View
+            style={{
+              marginHorizontal: signalSpacing.lg,
+              marginBottom: signalSpacing.sm,
+              height: 44,
+              borderRadius: signalRadius.md,
+              borderWidth: 1,
+              borderColor: signalColors.line,
+              backgroundColor: signalColors.surface,
+              flexDirection: "row",
+              alignItems: "center",
+              paddingHorizontal: signalSpacing.md,
+              gap: 8,
+            }}
+          >
+            <Search color={signalColors.inkMuted} size={17} />
+            <TextInput
+              value={search}
+              onChangeText={setSearch}
+              placeholder="Search tasks and conversations"
+              placeholderTextColor={signalColors.inkMuted}
+              style={{ flex: 1, color: signalColors.ink }}
+            />
+          </View>
           <ScrollView contentContainerStyle={{ padding: signalSpacing.lg, gap: signalSpacing.sm }}>
             <Pressable
               accessibilityRole="button"
@@ -111,7 +156,7 @@ function HistorySheet({ conversations }: { conversations: Conversation[] }) {
               </Text>
               <ChevronRight color="#8FA6A0" size={18} />
             </Pressable>
-            {conversations.map((conversation) => (
+            {filteredConversations.map((conversation) => (
               <Pressable
                 key={conversation.id}
                 accessibilityRole="button"
@@ -271,6 +316,16 @@ export function ChatScreen() {
     [task.data?.recentEvents],
   );
   const pendingActions = task.data?.pendingActions ?? conversation.data?.pendingActions ?? [];
+  const artifactIds = useMemo(
+    () => [
+      ...new Set(
+        (conversation.data?.messages ?? []).flatMap((message) =>
+          message.content.flatMap((block) => (block.type === "artifact" ? [block.artifactId] : [])),
+        ),
+      ),
+    ],
+    [conversation.data?.messages],
+  );
 
   useEffect(() => {
     if (pendingActions.length > 0) {
@@ -410,6 +465,16 @@ export function ChatScreen() {
             {pendingActions.map((action) => (
               <ActionCard key={action.id} action={action} />
             ))}
+            {artifactIds.length > 0 && (
+              <View style={{ marginBottom: signalSpacing.lg }}>
+                <Text style={{ color: signalColors.ink, fontWeight: "800", marginBottom: 8 }}>
+                  Task files
+                </Text>
+                {artifactIds.map((artifactId) => (
+                  <ArtifactCard key={artifactId} artifactId={artifactId} />
+                ))}
+              </View>
+            )}
             <View
               style={{ flexDirection: "row", alignItems: "center", marginBottom: signalSpacing.lg }}
             >
@@ -435,6 +500,7 @@ export function ChatScreen() {
                 last={index === visibleEvents.length - 1}
               />
             ))}
+            <ReceiptCard task={currentTask} events={visibleEvents} />
             {task.isError && (
               <View
                 style={{

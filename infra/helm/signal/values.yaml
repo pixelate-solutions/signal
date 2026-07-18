@@ -18,25 +18,72 @@ config:
   PORT: "3000"
   TEMPORAL_ADDRESS: signal-temporal-frontend:7233
   TEMPORAL_NAMESPACE: signal
+  TEMPORAL_TLS: "false"
   TEMPORAL_TASK_QUEUE_TASKS: signal-tasks
   TEMPORAL_TASK_QUEUE_BROWSER: signal-browser
   TEMPORAL_TASK_QUEUE_SANDBOX: signal-sandbox
   TEMPORAL_TASK_QUEUE_DOCUMENTS: signal-documents
-  OPA_URL: http://signal-opa:8181
-  PUSH_PROVIDER: firebase
-  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  API_INTERNAL_URL: 'http://{{ include "signal.fullname" . }}-api:80'
+  BROWSER_WORKER_URL: 'http://{{ include "signal.fullname" . }}-browser:3200'
+  DOCUMENT_WORKER_URL: 'http://{{ include "signal.fullname" . }}-document:3400'
+  SANDBOX_CONTROLLER_URL: 'http://{{ include "signal.fullname" . }}-sandbox:3300'
+  OPA_URL: 'http://{{ include "signal.fullname" . }}-opa:8181'
+  PUSH_PROVIDER: platform
+  OTEL_EXPORTER_OTLP_ENDPOINT: 'http://{{ include "signal.fullname" . }}-observability:4318'
+  CLAMAV_HOST: '{{ include "signal.fullname" . }}-clamav'
+  DEMO_MODE: "false"
+  MOBILE_DEEP_LINK_SCHEME: signal
+  TRANSCRIPTION_API_TOKEN_FILE: /var/run/secrets/signal/transcription-token
+  SANDBOX_EXECUTOR_URL: 'http://{{ include "signal.fullname" . }}-sandbox-runner:3350'
+  GENERATED_CANARY_URL: 'http://{{ include "signal.fullname" . }}-generated-canary:3375'
 
 serviceAccounts:
   core:
     create: true
-    name: ""
+    name: signal-core
     annotations: {}
   generated:
     create: true
-    name: ""
+    name: signal-generated
+    annotations: {}
+  sandbox:
+    create: true
+    name: signal-sandbox
+    annotations: {}
+  restricted:
+    create: true
+    name: signal-restricted
+    annotations: {}
+  observability:
+    create: true
+    name: signal-observability
     annotations: {}
 
 workloads:
+  opa:
+    enabled: true
+    identity: restricted
+    replicas: 2
+    image: openpolicyagent/opa:1.7.1-static
+    command: ["/opa"]
+    args: ["run", "--server", "--addr=0.0.0.0:8181", "/policies/authz.rego"]
+    port: 8181
+    healthPath: /health
+    service: true
+    servicePort: 8181
+    extraVolumeMounts:
+      - name: policies
+        mountPath: /policies
+        readOnly: true
+    extraVolumes:
+      - name: policies
+        configMap:
+          name: '{{ include "signal.fullname" . }}-opa-policy'
+    resources:
+      requests: { cpu: 100m, memory: 128Mi }
+      limits: { cpu: "1", memory: 512Mi }
+    autoscaling:
+      { enabled: true, minReplicas: 2, maxReplicas: 6, targetCPUUtilizationPercentage: 70 }
   api:
     enabled: true
     identity: core
@@ -45,8 +92,55 @@ workloads:
     command: ["node", "dist/main.js"]
     port: 3000
     healthPath: /health
+    readinessPath: /ready
     service: true
     servicePort: 80
+    secretKeys:
+      - DATABASE_URL
+      - REDIS_URL
+      - S3_REGION
+      - S3_BUCKET
+      - KMS_KEY_ID
+      - INTERNAL_SERVICE_TOKEN
+      - TEMPORAL_ADDRESS
+      - TEMPORAL_NAMESPACE
+      - TEMPORAL_API_KEY
+      - OIDC_ISSUER
+      - OIDC_PUBLIC_ISSUER
+      - OIDC_JWKS_URL
+      - OIDC_CLIENT_ID
+      - OIDC_AUDIENCE
+      - OIDC_MOBILE_CLIENT_ID
+      - OIDC_MOBILE_REDIRECT_URI
+      - OIDC_OPS_CLIENT_ID
+      - OIDC_OPS_REDIRECT_URI
+      - OIDC_ADMIN_CLIENT_ID
+      - OIDC_ADMIN_CLIENT_SECRET_HANDLE
+      - OIDC_ADMIN_CLIENT_SECRET
+      - INVITATION_EMAIL_FROM
+      - GOOGLE_OAUTH_CLIENT_ID
+      - GOOGLE_OAUTH_CLIENT_SECRET_HANDLE
+      - GOOGLE_OAUTH_CLIENT_SECRET
+      - GITHUB_OAUTH_CLIENT_ID
+      - GITHUB_OAUTH_CLIENT_SECRET_HANDLE
+      - GITHUB_OAUTH_CLIENT_SECRET
+      - OAUTH_STATE_SIGNING_KEY_HANDLE
+      - OAUTH_STATE_SIGNING_KEY
+      - COMPOSIO_API_KEY
+      - COMPOSIO_CALLBACK_URL
+      - COMPOSIO_AUTH_CONFIGS_JSON
+      - COMPOSIO_TOOLS_JSON
+      - DEVICE_COMMAND_SIGNING_SEED_HANDLE
+      - DEVICE_COMMAND_SIGNING_SEED
+      - FIREBASE_PROJECT_ID
+      - FIREBASE_SERVICE_ACCOUNT_JSON_HANDLE
+      - FIREBASE_SERVICE_ACCOUNT_JSON
+      - APNS_KEY_HANDLE
+      - APNS_PRIVATE_KEY
+      - APNS_TEAM_ID
+      - APNS_KEY_ID
+      - APNS_BUNDLE_ID
+      - APNS_ENVIRONMENT
     resources:
       requests: { cpu: 250m, memory: 384Mi }
       limits: { cpu: "2", memory: 1Gi }
@@ -57,10 +151,48 @@ workloads:
     identity: core
     replicas: 3
     image: ghcr.io/pixelate-solutions/signal-workflow-worker:0.1.0
-    command: ["node", "dist/local.js"]
+    command: ["node", "dist/production.js"]
     port: 3500
     healthPath: /health
     service: false
+    secretKeys:
+      - DATABASE_URL
+      - S3_REGION
+      - S3_BUCKET
+      - KMS_KEY_ID
+      - INTERNAL_SERVICE_TOKEN
+      - TEMPORAL_ADDRESS
+      - TEMPORAL_NAMESPACE
+      - TEMPORAL_API_KEY
+      - META_MODEL_API_BASE_URL
+      - META_MODEL_API_KEY
+      - META_MODEL_ID
+      - META_MODEL_API_VERSION
+      - META_INPUT_COST_MICROS_PER_MILLION
+      - META_OUTPUT_COST_MICROS_PER_MILLION
+      - META_REASONING_COST_MICROS_PER_MILLION
+      - GOOGLE_OAUTH_CLIENT_ID
+      - GOOGLE_OAUTH_CLIENT_SECRET_HANDLE
+      - GOOGLE_OAUTH_CLIENT_SECRET
+      - GITHUB_OAUTH_CLIENT_ID
+      - GITHUB_OAUTH_CLIENT_SECRET_HANDLE
+      - GITHUB_OAUTH_CLIENT_SECRET
+      - OAUTH_STATE_SIGNING_KEY_HANDLE
+      - OAUTH_STATE_SIGNING_KEY
+      - COMPOSIO_API_KEY
+      - COMPOSIO_CALLBACK_URL
+      - COMPOSIO_AUTH_CONFIGS_JSON
+      - COMPOSIO_TOOLS_JSON
+      - FIREBASE_PROJECT_ID
+      - FIREBASE_SERVICE_ACCOUNT_JSON_HANDLE
+      - FIREBASE_SERVICE_ACCOUNT_JSON
+      - APNS_KEY_HANDLE
+      - APNS_PRIVATE_KEY
+      - APNS_TEAM_ID
+      - APNS_KEY_ID
+      - APNS_BUNDLE_ID
+      - APNS_ENVIRONMENT
+      - ADAPTER_SIGNING_KMS_KEY_ID
     resources:
       requests: { cpu: 500m, memory: 512Mi }
       limits: { cpu: "2", memory: 2Gi }
@@ -76,7 +208,16 @@ workloads:
     healthPath: /health
     service: true
     servicePort: 3200
+    secretKeys:
+      - DATABASE_URL
+      - S3_REGION
+      - S3_BUCKET
+      - KMS_KEY_ID
+      - INTERNAL_SERVICE_TOKEN
     tempSizeLimit: 2Gi
+    nodeSelector: { signal.pixelate.dev/pool: browser }
+    tolerations:
+      - { key: signal.pixelate.dev/browser, operator: Equal, value: "true", effect: NoSchedule }
     resources:
       requests: { cpu: "1", memory: 1Gi }
       limits: { cpu: "4", memory: 4Gi }
@@ -92,11 +233,63 @@ workloads:
     healthPath: /health
     service: true
     servicePort: 3300
+    secretKeys:
+      - DATABASE_URL
+      - S3_REGION
+      - S3_BUCKET
+      - INTERNAL_SERVICE_TOKEN
+      - ADAPTER_SIGNING_KMS_KEY_ID
+      - SANDBOX_RUNNER_TOKEN
+      - GENERATED_CANARY_TOKEN
     resources:
       requests: { cpu: 250m, memory: 256Mi }
       limits: { cpu: "1", memory: 1Gi }
     autoscaling:
       { enabled: true, minReplicas: 2, maxReplicas: 10, targetCPUUtilizationPercentage: 65 }
+  sandbox-runner:
+    enabled: true
+    identity: sandbox
+    replicas: 2
+    image: ghcr.io/pixelate-solutions/signal-sandbox-controller:0.1.0
+    command: ["node", "dist/host.js"]
+    port: 3350
+    healthPath: /health
+    service: true
+    servicePort: 3350
+    env:
+      SANDBOX_RUNNER_MODE: "true"
+      SANDBOX_ISOLATION_CLASS: "fargate-microvm+node-permission-model"
+    secretKeys:
+      - SANDBOX_RUNNER_TOKEN
+    tempSizeLimit: 512Mi
+    nodeSelector:
+      signal.pixelate.dev/pool: sandbox
+      signal.pixelate.dev/isolation: required
+    tolerations:
+      - { key: signal.pixelate.dev/sandbox, operator: Equal, value: "true", effect: NoSchedule }
+    resources:
+      requests: { cpu: 500m, memory: 512Mi }
+      limits: { cpu: "1", memory: 768Mi }
+    autoscaling:
+      { enabled: true, minReplicas: 2, maxReplicas: 30, targetCPUUtilizationPercentage: 60 }
+  generated-canary:
+    enabled: true
+    identity: restricted
+    replicas: 2
+    image: ghcr.io/pixelate-solutions/signal-sandbox-controller:0.1.0
+    command: ["node", "dist/canary.js"]
+    port: 3375
+    healthPath: /health
+    service: true
+    servicePort: 3375
+    secretKeys:
+      - GENERATED_CANARY_TOKEN
+      - GENERATED_CANARY_CONFIG_JSON
+    resources:
+      requests: { cpu: 100m, memory: 128Mi }
+      limits: { cpu: "1", memory: 512Mi }
+    autoscaling:
+      { enabled: true, minReplicas: 2, maxReplicas: 6, targetCPUUtilizationPercentage: 65 }
   document:
     enabled: true
     identity: core
@@ -107,7 +300,13 @@ workloads:
     healthPath: /health
     service: true
     servicePort: 3400
+    secretKeys:
+      - TRANSCRIPTION_API_URL
+      - TRANSCRIPTION_MODEL
     tempSizeLimit: 2Gi
+    nodeSelector: { signal.pixelate.dev/pool: document }
+    tolerations:
+      - { key: signal.pixelate.dev/document, operator: Equal, value: "true", effect: NoSchedule }
     resources:
       requests: { cpu: 500m, memory: 1Gi }
       limits: { cpu: "4", memory: 4Gi }
@@ -122,15 +321,49 @@ workloads:
     port: 3600
     healthPath: /health
     service: false
+    nodeSelector:
+      signal.pixelate.dev/pool: sandbox
+      signal.pixelate.dev/isolation: required
+    tolerations:
+      - { key: signal.pixelate.dev/sandbox, operator: Equal, value: "true", effect: NoSchedule }
     resources:
       requests: { cpu: 250m, memory: 256Mi }
       limits: { cpu: "1", memory: 512Mi }
     autoscaling:
       { enabled: false, minReplicas: 1, maxReplicas: 1, targetCPUUtilizationPercentage: 70 }
 
+clamav:
+  enabled: true
+  replicas: 2
+  image: clamav/clamav:1.5.2
+  databaseSizeLimit: 2Gi
+  resources:
+    requests: { cpu: 500m, memory: 3Gi }
+    limits: { cpu: "2", memory: 5Gi }
+
+observability:
+  enabled: true
+  replicas: 2
+  image: otel/opentelemetry-collector-contrib:0.153.0
+  awsRegion: us-east-2
+  environment: production
+  clusterName: signal-development
+  metricsNamespace: Signal
+  logRetentionDays: 30
+  resources:
+    requests: { cpu: 200m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
+fargateLogging:
+  enabled: false
+  awsRegion: us-east-2
+  logGroupName: /aws/eks/signal-development/fargate/isolated
+
 ingress:
   enabled: false
-  className: nginx
+  className: alb
+  certificateArn: ""
+  wafAclArn: ""
   annotations: {}
   hosts:
     - host: signal.example.com
@@ -141,7 +374,5 @@ ingress:
 
 networkPolicy:
   enabled: true
-  ingressNamespaceLabels:
-    kubernetes.io/metadata.name: ingress-nginx
-  egressProxyPodLabels:
-    app.kubernetes.io/name: signal-egress-proxy
+  loadBalancerSourceCidrs: [10.42.0.0/16]
+  privateServiceCidrs: [10.42.0.0/16]

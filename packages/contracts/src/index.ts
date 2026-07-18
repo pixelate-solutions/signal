@@ -9,6 +9,7 @@ export * from "./errors.js";
 export * from "./events.js";
 export * from "./ids.js";
 export * from "./memory.js";
+export * from "./operations.js";
 export * from "./settings.js";
 export * from "./tasks.js";
 export * from "./tools.js";

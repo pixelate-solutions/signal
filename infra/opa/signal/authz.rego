@@ -6,9 +6,9 @@ decision := {"outcome": "DENY", "reason": "Secret data cannot leave the credenti
   "secret" in input.dataClasses
 } else := {"outcome": "DENY", "reason": "Emergency stop denies new privileged leases.", "limits": {}} if {
   input.materialPayload.emergencyStop == true
-} else := {"outcome": "REQUIRE_MULTI_PARTY_APPROVAL", "reason": "Privileged or irreversible actions require elevated approval.", "limits": {}} if {
+} else := {"outcome": "REQUIRE_MULTI_PARTY_APPROVAL", "reason": "Privileged or irreversible actions require elevated approval.", "limits": {"approval_threshold": 2}} if {
   input.capability.risk == "R4"
-} else := {"outcome": "REQUIRE_MULTI_PARTY_APPROVAL", "reason": "Privileged or irreversible actions require elevated approval.", "limits": {}} if {
+} else := {"outcome": "REQUIRE_MULTI_PARTY_APPROVAL", "reason": "Privileged or irreversible actions require elevated approval.", "limits": {"approval_threshold": 2}} if {
   input.capability.sideEffect == "irreversible"
 } else := {"outcome": "REQUIRE_APPROVAL", "reason": "Generated capabilities require explicit approval and canary evidence.", "limits": {"tenant_canary": true}} if {
   startswith(input.capability.name, "generated.")

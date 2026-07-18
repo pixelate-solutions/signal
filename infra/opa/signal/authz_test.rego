@@ -36,6 +36,7 @@ test_r3_requires_approval if {
 test_r4_requires_elevated_approval if {
   result := authorize with input as fixture("R4", "irreversible", "independent")
   result.outcome == "REQUIRE_MULTI_PARTY_APPROVAL"
+  result.limits.approval_threshold == 2
 }
 
 test_secret_denied if {

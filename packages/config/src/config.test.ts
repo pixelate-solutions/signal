@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { signalConfigSchema } from "./index.js";
+import { assertHardenedRuntimeMode, isDemoMode, signalConfigSchema } from "./index.js";
 
 const required = {
   APP_PUBLIC_URL: "http://localhost:3000",
@@ -40,5 +40,24 @@ describe("typed configuration", () => {
     expect(
       signalConfigSchema.safeParse({ ...required, MOBILE_DEEP_LINK_SCHEME: "Signal App" }).success,
     ).toBe(false);
+  });
+
+  it("never enables deterministic demo behavior in a hardened environment", () => {
+    expect(isDemoMode({ NODE_ENV: "development", DEMO_MODE: "true" })).toBe(true);
+    expect(isDemoMode({ NODE_ENV: "production", DEMO_MODE: "true" })).toBe(false);
+    expect(() =>
+      assertHardenedRuntimeMode({
+        NODE_ENV: "production",
+        DEMO_MODE: "true",
+        PUSH_PROVIDER: "platform",
+      }),
+    ).toThrow("DEMO_MODE");
+    expect(() =>
+      assertHardenedRuntimeMode({
+        NODE_ENV: "staging",
+        DEMO_MODE: "false",
+        PUSH_PROVIDER: "development",
+      }),
+    ).toThrow("APNs/FCM");
   });
 });

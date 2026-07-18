@@ -19,9 +19,15 @@
     "test": "vitest run --exclude 'dist/**'"
   },
   "dependencies": {
+    "@signal/artifact-service": "workspace:*",
+    "@signal/auth-sdk": "workspace:*",
+    "@signal/connection-service": "workspace:*",
     "@signal/event-sdk": "workspace:*",
     "@signal/observability": "workspace:*",
+    "@signal/persistence": "workspace:*",
+    "@signal/tool-sdk": "workspace:*",
     "fastify": "^5.10.0",
+    "ipaddr.js": "^2.4.0",
     "playwright-core": "^1.61.1",
     "zod": "catalog:"
   }

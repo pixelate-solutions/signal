@@ -13,7 +13,14 @@ describe("local external-system fixtures", () => {
       payload: { stream: false },
     });
     expect(response.statusCode).toBe(200);
-    expect(response.json().output_text).toContain("Deterministic local Meta");
+    const body = response.json() as {
+      model: string;
+      output_text: string;
+      output: { content: { text: string }[] }[];
+    };
+    expect(body.model).toBe("meta/muse-spark-1.1");
+    expect(body.output_text).toContain('"desiredCapability":"signal_test_state.read"');
+    expect(body.output[0]?.content[0]?.text).toBe(body.output_text);
   });
 
   it("deduplicates provider writes and exposes verifiable state", async () => {

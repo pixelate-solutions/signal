@@ -108,6 +108,67 @@ describe("authoritative task service", () => {
     expect((await h.service.getTask(h.principal, task.id)).state).toBe("WAITING_USER");
   });
 
+  it("keeps a digest-bound action pending until distinct approvers reach quorum", async () => {
+    let id = 0;
+    const store = new InMemoryTaskStore();
+    const service = new SignalTaskService(
+      store,
+      { now: () => new Date("2026-07-18T12:00:00.000Z") },
+      { next: (prefix) => `${prefix}_quorum${String(++id).padStart(8, "0")}` },
+      {
+        eligibleApproverUserIds: async () => ["usr_demo0001", "usr_admin0001"],
+      },
+    );
+    const owner = harness().principal;
+    const admin: Principal = {
+      ...owner,
+      subject: "local|admin",
+      userId: "usr_admin0001",
+      roles: ["administrator"],
+      sessionId: "ses_admin0001",
+    };
+    const conversation = await service.createConversation(owner, { title: "Quorum" });
+    const { task } = await service.sendMessage(
+      owner,
+      conversation.id,
+      { content: [{ type: "text", text: "Perform an irreversible action." }] },
+      "message-quorum-0001",
+    );
+    await service.transition(owner, task.id, "PLANNING", {
+      type: "workflow",
+      id: task.workflowId,
+    });
+    await service.transition(owner, task.id, "RUNNING", {
+      type: "workflow",
+      id: task.workflowId,
+    });
+    const action = await service.createActionRequest(owner, task.id, {
+      type: "APPROVAL",
+      title: "Approve irreversible action?",
+      description: "Two distinct administrators must approve these exact terms.",
+      materialPayload: { operation: "irreversible" },
+      risk: "R4",
+      approvalThreshold: 2,
+      expiresAt: new Date("2026-07-18T13:00:00.000Z"),
+    });
+    await service.respondToAction(owner, action.id, {
+      response: "APPROVE",
+      materialDigest: action.materialDigest,
+    });
+    expect((await service.getActionRequest(owner, action.id)).state).toBe("PENDING");
+    expect((await service.getTask(owner, task.id)).state).toBe("WAITING_USER");
+    await service.respondToAction(admin, action.id, {
+      response: "APPROVE",
+      materialDigest: action.materialDigest,
+    });
+    expect(await service.getActionRequest(owner, action.id)).toMatchObject({
+      state: "RESPONDED",
+      approvalThreshold: 2,
+      approvedUserIds: ["usr_demo0001", "usr_admin0001"],
+    });
+    expect((await service.getTask(owner, task.id)).state).toBe("RUNNING");
+  });
+
   it("refuses completion without independent evidence", async () => {
     const h = harness();
     const { task } = await createTask(h);
