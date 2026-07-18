@@ -19,6 +19,8 @@
   },
   "dependencies": {
     "@signal/contracts": "workspace:*",
-    "@signal/observability": "workspace:*"
+    "@signal/observability": "workspace:*",
+    "@signal/persistence": "workspace:*",
+    "jose": "^6.2.3"
   }
 }

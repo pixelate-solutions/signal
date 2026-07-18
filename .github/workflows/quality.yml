@@ -45,6 +45,10 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+      - name: Install OCR runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends tesseract-ocr
       - run: python -m pip install -e . pytest ruff mypy httpx types-Pillow types-openpyxl types-python-dateutil types-reportlab
       - run: ruff format --check app tests
       - run: ruff check app tests

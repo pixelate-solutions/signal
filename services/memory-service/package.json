@@ -20,6 +20,7 @@
   "dependencies": {
     "@signal/auth-sdk": "workspace:*",
     "@signal/contracts": "workspace:*",
-    "@signal/memory-sdk": "workspace:*"
+    "@signal/memory-sdk": "workspace:*",
+    "@signal/persistence": "workspace:*"
   }
 }

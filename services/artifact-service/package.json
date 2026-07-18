@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@signal/auth-sdk": "workspace:*",
-    "@signal/contracts": "workspace:*"
+    "@signal/contracts": "workspace:*",
+    "@signal/persistence": "workspace:*"
   }
 }

@@ -12,6 +12,10 @@ export type WorkerDependencies = {
 export async function runWorker(dependencies: WorkerDependencies): Promise<void> {
   const connection = await NativeConnection.connect({
     address: process.env["TEMPORAL_ADDRESS"] ?? "localhost:7233",
+    tls: process.env["TEMPORAL_TLS"] === "true",
+    ...(process.env["TEMPORAL_API_KEY"] === undefined
+      ? {}
+      : { apiKey: process.env["TEMPORAL_API_KEY"] }),
   });
   const worker = await Worker.create({
     connection,

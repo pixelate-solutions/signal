@@ -4,6 +4,8 @@ data "aws_availability_zones" "available" {
 
 data "aws_caller_identity" "current" {}
 
+data "aws_partition" "current" {}
+
 check "distinct_recovery_region" {
   assert {
     condition     = var.dr_region != var.aws_region
@@ -48,8 +50,8 @@ locals {
     }
     sandbox = {
       instance_types = ["m7i.xlarge"]
-      min_size       = 2
-      desired_size   = 2
+      min_size       = 0
+      desired_size   = 0
       max_size       = 30
       labels         = { "signal.pixelate.dev/pool" = "sandbox", "signal.pixelate.dev/isolation" = "required" }
       taints         = [{ key = "signal.pixelate.dev/sandbox", value = "true", effect = "NO_SCHEDULE" }]
@@ -193,10 +195,44 @@ resource "aws_kms_alias" "data" {
   target_key_id = aws_kms_key.data.key_id
 }
 
+data "aws_iam_policy_document" "logs_kms" {
+  statement {
+    sid       = "AccountAdministration"
+    actions   = ["kms:*"]
+    resources = ["*"]
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+    }
+  }
+
+  statement {
+    sid = "CloudWatchLogsEncryption"
+    actions = [
+      "kms:Encrypt",
+      "kms:Decrypt",
+      "kms:ReEncrypt*",
+      "kms:GenerateDataKey*",
+      "kms:DescribeKey"
+    ]
+    resources = ["*"]
+    principals {
+      type        = "Service"
+      identifiers = ["logs.${var.aws_region}.amazonaws.com"]
+    }
+    condition {
+      test     = "ArnLike"
+      variable = "kms:EncryptionContext:aws:logs:arn"
+      values   = ["arn:${data.aws_partition.current.partition}:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:*"]
+    }
+  }
+}
+
 resource "aws_kms_key" "logs" {
   description             = "Signal log encryption"
   deletion_window_in_days = 30
   enable_key_rotation     = true
+  policy                  = data.aws_iam_policy_document.logs_kms.json
   tags                    = { Name = "${local.name}-logs" }
 }
 
@@ -317,10 +353,15 @@ resource "aws_eks_node_group" "pool" {
   }
 
   depends_on = [aws_iam_role_policy_attachment.eks_nodes]
+
+  tags = {
+    "k8s.io/cluster-autoscaler/enabled"       = "true"
+    "k8s.io/cluster-autoscaler/${local.name}" = "owned"
+  }
 }
 
 resource "aws_eks_addon" "core" {
-  for_each = toset(["vpc-cni", "coredns", "kube-proxy", "aws-ebs-csi-driver", "eks-pod-identity-agent"])
+  for_each = toset(["vpc-cni", "coredns", "kube-proxy", "aws-ebs-csi-driver", "eks-pod-identity-agent", "metrics-server"])
 
   cluster_name                = aws_eks_cluster.this.name
   addon_name                  = each.value
@@ -562,6 +603,11 @@ resource "aws_iam_role_policy_attachment" "backup" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup"
 }
 
+resource "aws_iam_role_policy_attachment" "backup_restore" {
+  role       = aws_iam_role.backup.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForRestores"
+}
+
 resource "aws_backup_selection" "database" {
   name         = "${local.name}-database"
   iam_role_arn = aws_iam_role.backup.arn
@@ -595,6 +641,60 @@ resource "aws_wafv2_web_acl" "edge" {
     visibility_config {
       cloudwatch_metrics_enabled = true
       metric_name                = "${local.name}-common"
+      sampled_requests_enabled   = true
+    }
+  }
+  rule {
+    name     = "AWSManagedRulesSQLiRuleSet"
+    priority = 2
+    override_action {
+      none {}
+    }
+    statement {
+      managed_rule_group_statement {
+        name        = "AWSManagedRulesSQLiRuleSet"
+        vendor_name = "AWS"
+      }
+    }
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${local.name}-sqli"
+      sampled_requests_enabled   = true
+    }
+  }
+  rule {
+    name     = "AWSManagedRulesAmazonIpReputationList"
+    priority = 3
+    override_action {
+      none {}
+    }
+    statement {
+      managed_rule_group_statement {
+        name        = "AWSManagedRulesAmazonIpReputationList"
+        vendor_name = "AWS"
+      }
+    }
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${local.name}-ip-reputation"
+      sampled_requests_enabled   = true
+    }
+  }
+  rule {
+    name     = "PerIpRateLimit"
+    priority = 4
+    action {
+      block {}
+    }
+    statement {
+      rate_based_statement {
+        aggregate_key_type = "IP"
+        limit              = var.environment == "production" ? 2000 : 5000
+      }
+    }
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${local.name}-rate-limit"
       sampled_requests_enabled   = true
     }
   }

@@ -110,6 +110,13 @@ export class ToolRegistry {
       .map(({ manifest }) => manifest);
   }
 
+  public all(): readonly ToolManifest[] {
+    return [...this.#adapters.values()]
+      .map(({ manifest }) => manifest)
+      .filter((manifest) => manifest.enabled)
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }
+
   private key(name: string, version: string): string {
     return `${name}@${version}`;
   }

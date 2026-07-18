@@ -7,6 +7,7 @@ import {
   type ToolResult,
 } from "@signal/contracts";
 import { redact } from "@signal/observability";
+import type { TenantRecordStore } from "@signal/persistence";
 import type { PolicyEvaluator, PolicyRequest } from "@signal/policy-client";
 import type { ToolAdapter, ToolRegistry } from "@signal/tool-sdk";
 
@@ -21,12 +22,17 @@ export type GatewayExecution = {
 };
 
 export type CredentialAvailability = {
-  available(connectionId: string): Promise<boolean>;
+  available(connectionId: string, context: ToolExecutionContext): Promise<boolean>;
 };
 
 export type GatewayAudit = {
   record(entry: {
     executionId: string;
+    tenantId: string;
+    userId: string;
+    taskId: string;
+    stepId: string;
+    connectionId: string | null;
     tool: string;
     policyDecisionId: string;
     inputDigest: string;
@@ -51,6 +57,7 @@ export class ToolGateway {
     private readonly policy: PolicyEvaluator,
     private readonly credentials: CredentialAvailability = noCredentials,
     private readonly audit: GatewayAudit = noAudit,
+    private readonly durableIdempotency?: TenantRecordStore,
   ) {}
 
   public async execute(execution: GatewayExecution): Promise<ToolResult> {
@@ -77,7 +84,8 @@ export class ToolGateway {
 
     if (
       adapter.manifest.auth.length > 0 &&
-      (context.connectionId === null || !(await this.credentials.available(context.connectionId)))
+      (context.connectionId === null ||
+        !(await this.credentials.available(context.connectionId, context)))
     ) {
       return {
         status: "CONNECTION_REQUIRED",
@@ -92,15 +100,26 @@ export class ToolGateway {
     }
 
     const decision = await this.policy.evaluate(execution.policyRequest, execution.signal);
-    if (decision.outcome === "DENY" || decision.outcome === "REQUIRE_MULTI_PARTY_APPROVAL") {
+    if (decision.outcome === "DENY") {
       return this.failure(decision.reason, "policy", false, "definitely_not_started");
     }
     if (
-      decision.outcome === "REQUIRE_APPROVAL" &&
+      (decision.outcome === "REQUIRE_APPROVAL" ||
+        decision.outcome === "REQUIRE_MULTI_PARTY_APPROVAL") &&
       execution.approvedMaterialDigest !== decision.materialDigest
     ) {
       return {
         status: "APPROVAL_REQUIRED",
+        data: {
+          policyOutcome: decision.outcome,
+          approvalThreshold:
+            decision.outcome === "REQUIRE_MULTI_PARTY_APPROVAL"
+              ? Number(decision.limits["approval_threshold"] ?? 2)
+              : 1,
+          ...(Array.isArray(decision.limits["approver_user_ids"])
+            ? { approverUserIds: decision.limits["approver_user_ids"] }
+            : {}),
+        },
         sanitizedMessage: decision.reason,
         provider: {},
         retryable: false,
@@ -113,6 +132,46 @@ export class ToolGateway {
     }
 
     const idempotencyKey = `${context.taskId}:${context.idempotencyKey}`;
+    const durableIdempotency = this.durableIdempotency;
+    if (durableIdempotency !== undefined) {
+      const persisted = await durableIdempotency.runExclusive(
+        context.tenantId,
+        async (transaction) => {
+          const existing = await transaction.get<ToolResult>("tool.idempotency", idempotencyKey);
+          return existing === undefined ? undefined : toolResultSchema.parse(existing);
+        },
+      );
+      if (persisted !== undefined) return persisted;
+
+      const inFlight = this.#idempotency.get(idempotencyKey);
+      if (inFlight !== undefined) return inFlight;
+
+      const promise = (async () => {
+        const result = await this.executeAdapter(
+          adapter,
+          execution,
+          decision.id,
+          decision.inputDigest,
+        );
+        if (result.status === "APPROVAL_REQUIRED" || result.status === "CONNECTION_REQUIRED") {
+          return result;
+        }
+        return durableIdempotency.runExclusive(context.tenantId, async (transaction) => {
+          // Provider idempotency protects cross-replica races. Recheck here so a
+          // concurrent replica's completed response remains canonical.
+          const existing = await transaction.get<ToolResult>("tool.idempotency", idempotencyKey);
+          if (existing !== undefined) return toolResultSchema.parse(existing);
+          await transaction.put("tool.idempotency", idempotencyKey, result);
+          return result;
+        });
+      })();
+      this.#idempotency.set(idempotencyKey, promise);
+      try {
+        return await promise;
+      } finally {
+        this.#idempotency.delete(idempotencyKey);
+      }
+    }
     const existing = this.#idempotency.get(idempotencyKey);
     if (existing !== undefined) {
       return existing;
@@ -120,6 +179,9 @@ export class ToolGateway {
 
     const promise = this.executeAdapter(adapter, execution, decision.id, decision.inputDigest);
     this.#idempotency.set(idempotencyKey, promise);
+    // The in-memory composition has no durable replay store, so retain the
+    // terminal promise for the lifetime of the process. Production uses the
+    // tenant record store above and only keeps truly in-flight promises here.
     return promise;
   }
 
@@ -143,6 +205,27 @@ export class ToolGateway {
           { signal },
         ),
       );
+      if (result.status === "SUCCEEDED" && adapter.manifest.verification.mandatory) {
+        result =
+          adapter.verify === undefined
+            ? toolResultSchema.parse({
+                ...result,
+                status: "FAILED",
+                sanitizedMessage:
+                  "This capability requires verification but no verifier is installed; completion was not claimed.",
+                retryable: false,
+                errorClass: "unknown",
+                verificationHint: "Install a verifier before enabling this capability.",
+              })
+            : toolResultSchema.parse(
+                await adapter.verify(
+                  execution.input,
+                  result,
+                  { ...execution.context, policyDecisionId },
+                  { signal },
+                ),
+              );
+      }
     } catch (_error) {
       const timedOut = timeout.aborted;
       result = this.failure(
@@ -166,6 +249,11 @@ export class ToolGateway {
 
     await this.audit.record({
       executionId: execution.context.executionId,
+      tenantId: execution.context.tenantId,
+      userId: execution.context.userId,
+      taskId: execution.context.taskId,
+      stepId: execution.context.stepId,
+      connectionId: execution.context.connectionId,
       tool: `${adapter.manifest.name}@${adapter.manifest.version}`,
       policyDecisionId,
       inputDigest,

@@ -62,6 +62,42 @@ export function extractExplicitMemory(
   return undefined;
 }
 
+export function extractInferredMemory(
+  text: string,
+  sourceId: string,
+  userId: string,
+  now: Date,
+):
+  | (Omit<MemoryCandidate, "explicitness" | "confidence"> & {
+      explicitness: "inferred";
+      confidence: number;
+    })
+  | undefined {
+  assertMemorySafe(text, {});
+  const preference = text.match(/\b(?:i prefer|my preference is|i usually use)\s+(.{3,240})/i)?.[1];
+  const timezone = text.match(/\bmy time\s?zone is\s+([A-Za-z_+/-]{2,80})/i)?.[1];
+  const value = timezone ?? preference?.replace(/[.!?]+$/, "");
+  if (value === undefined) return undefined;
+  const predicate = timezone === undefined ? "user.preference" : "user.timezone";
+  const sensitive = /\b(?:health|medical|bank|financial|legal|identity|diagnosis)\b/i.test(text);
+  return {
+    kind: "semantic_fact",
+    subject: "user.current",
+    predicate,
+    object: timezone === undefined ? { preference: value } : { timezone: value },
+    canonicalText:
+      timezone === undefined ? `User preference: ${value}` : `User time zone: ${value}`,
+    scope: { type: "user", id: userId },
+    explicitness: "inferred",
+    confidence: timezone === undefined ? 0.72 : 0.86,
+    sensitivity: sensitive ? "highly_sensitive" : "internal",
+    validFrom: now.toISOString(),
+    validTo: null,
+    expiresAt: null,
+    sourceIds: [sourceId],
+  };
+}
+
 export type MemoryQuery = {
   text: string;
   tenantId: string;
@@ -72,6 +108,48 @@ export type MemoryQuery = {
 
 function words(text: string): Set<string> {
   return new Set(text.toLowerCase().match(/[a-z0-9_.:/-]+/g) ?? []);
+}
+
+export const MEMORY_EMBEDDING_VERSION = "signal-feature-hash-v1";
+export const MEMORY_EMBEDDING_DIMENSIONS = 256;
+
+function hashTerm(term: string, seed: number): number {
+  let value = seed >>> 0;
+  for (let index = 0; index < term.length; index += 1) {
+    value ^= term.charCodeAt(index);
+    value = Math.imul(value, 16_777_619);
+  }
+  return value >>> 0;
+}
+
+/**
+ * Creates a deterministic, non-secret-bearing retrieval vector. The feature
+ * hashing keeps local/test operation independent of a model provider while
+ * allowing the durable derivative to be replaced by a future provider vector
+ * under a new version without changing the memory record.
+ */
+export function createMemoryEmbedding(text: string): number[] {
+  const tokens = [...words(text)];
+  const terms = [
+    ...tokens,
+    ...tokens.slice(0, -1).map((token, index) => `${token}_${tokens[index + 1] ?? ""}`),
+  ];
+  const vector = Array.from<number>({ length: MEMORY_EMBEDDING_DIMENSIONS }).fill(0);
+  for (const term of terms) {
+    const bucket = hashTerm(term, 2_166_136_261) % MEMORY_EMBEDDING_DIMENSIONS;
+    const sign = (hashTerm(term, 3_332_000_911) & 1) === 0 ? 1 : -1;
+    vector[bucket] = (vector[bucket] ?? 0) + sign;
+  }
+  const magnitude = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0));
+  return magnitude === 0 ? vector : vector.map((value) => value / magnitude);
+}
+
+export function memoryEmbeddingSimilarity(
+  left: readonly number[],
+  right: readonly number[],
+): number {
+  if (left.length !== right.length || left.length === 0) return 0;
+  return left.reduce((score, value, index) => score + value * (right[index] ?? 0), 0);
 }
 
 export function rankMemories(

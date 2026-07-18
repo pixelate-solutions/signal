@@ -5,6 +5,7 @@
     "scheme": "signal",
     "version": "0.1.0",
     "orientation": "portrait",
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "backgroundColor": "#F3F6F2",
@@ -20,6 +21,7 @@
     "android": {
       "package": "solutions.pixelate.signal",
       "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#071A20"
       },
       "intentFilters": [
@@ -40,10 +42,41 @@
     },
     "web": {
       "bundler": "metro",
-      "output": "single"
+      "output": "single",
+      "favicon": "./assets/favicon.png"
     },
     "plugins": [
       "expo-secure-store",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#12433E",
+          "defaultChannel": "action-required",
+          "enableBackgroundRemoteNotifications": true
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash.png",
+          "imageWidth": 256,
+          "resizeMode": "contain",
+          "backgroundColor": "#F3F6F2",
+          "dark": {
+            "image": "./assets/splash.png",
+            "backgroundColor": "#071A20"
+          }
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Signal records audio only while you hold the voice input control.",
+          "enableBackgroundRecording": false,
+          "enableBackgroundPlayback": false
+        }
+      ],
       "expo-document-picker",
       [
         "expo-image-picker",

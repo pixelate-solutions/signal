@@ -42,7 +42,7 @@ export const deviceRegistrationSchema = z
     appVariant: z.enum(["consumer", "managed_enterprise"]),
     displayName: z.string().min(1).max(200),
     publicKey: z.string().min(32).max(4_096),
-    pushTokenHandle: z.string().min(8).max(500).nullable(),
+    pushToken: z.string().min(8).max(4_096).nullable(),
     capabilities: z.array(deviceCommandSchema.shape.actionType).max(100),
   })
   .strict();

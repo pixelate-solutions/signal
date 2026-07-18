@@ -1,28 +1,51 @@
 import {
   createParamDecorator,
+  Inject,
   Injectable,
+  ForbiddenException,
+  ServiceUnavailableException,
   UnauthorizedException,
   type CanActivate,
   type ExecutionContext,
 } from "@nestjs/common";
 import type { FastifyRequest } from "fastify";
-import { createRemoteJWKSet, jwtVerify } from "jose";
+import { createRemoteJWKSet, errors as joseErrors, jwtVerify } from "jose";
 
-import { principalSchema, type Principal } from "@signal/auth-sdk";
+import type { Principal } from "@signal/auth-sdk";
+import { isDemoMode } from "@signal/config";
+import {
+  InactiveAccountError,
+  InvalidOidcClaimsError,
+  RevokedSessionError,
+  type IdentityService,
+  type OidcClaims,
+} from "@signal/identity-service";
+
+import { IDENTITY_SERVICE } from "./tokens.js";
+import { OPERATIONS_CONTROL } from "./tokens.js";
+import type { OperationsControlService } from "./operations-control.js";
 
 export type AuthenticatedRequest = FastifyRequest & { principal?: Principal };
 
 @Injectable()
 export class SignalAuthGuard implements CanActivate {
-  readonly #demoMode = process.env["DEMO_MODE"] === "true" || process.env["NODE_ENV"] === "test";
+  readonly #demoMode = isDemoMode();
   readonly #issuer = process.env["OIDC_ISSUER"];
   readonly #audience = process.env["OIDC_AUDIENCE"];
   readonly #jwks =
     this.#issuer === undefined
       ? undefined
       : createRemoteJWKSet(
-          new URL(`${this.#issuer.replace(/\/$/, "")}/protocol/openid-connect/certs`),
+          new URL(
+            process.env["OIDC_JWKS_URL"] ??
+              `${this.#issuer.replace(/\/$/, "")}/protocol/openid-connect/certs`,
+          ),
         );
+
+  public constructor(
+    @Inject(IDENTITY_SERVICE) private readonly identity: IdentityService,
+    @Inject(OPERATIONS_CONTROL) private readonly operations: OperationsControlService,
+  ) {}
 
   public async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
@@ -52,25 +75,56 @@ export class SignalAuthGuard implements CanActivate {
     ) {
       throw new UnauthorizedException("A valid OIDC bearer token is required.");
     }
-    const { payload } = await jwtVerify(authorization.slice(7), this.#jwks, {
-      issuer: this.#issuer,
-      audience: this.#audience,
-    });
-    const tenantId = payload["tenant_id"];
-    const userId = payload["user_id"];
-    const roles = payload["roles"];
-    const scopes = typeof payload["scope"] === "string" ? payload["scope"].split(" ") : [];
-    request.principal = principalSchema.parse({
-      subject: payload.sub,
-      tenantId,
-      userId,
-      roles,
-      scopes,
-      sessionId: payload["sid"] ?? payload.jti,
-      authenticatedAt: new Date(Number(payload["auth_time"] ?? payload.iat) * 1_000).toISOString(),
-      expiresAt: new Date(Number(payload.exp) * 1_000).toISOString(),
-      deviceId: payload["device_id"] ?? null,
-    });
+    try {
+      const { payload } = await jwtVerify(authorization.slice(7), this.#jwks, {
+        issuer: this.#issuer,
+        audience: this.#audience,
+      });
+      request.principal = await this.identity.resolveAndSync(payload as OidcClaims, this.#issuer);
+      const requestedTenant = request.headers["x-signal-tenant-id"];
+      if (typeof requestedTenant === "string" && requestedTenant !== request.principal.tenantId) {
+        try {
+          request.principal = await this.identity.principalForTenant(
+            request.principal,
+            requestedTenant,
+          );
+        } catch (error) {
+          throw new ForbiddenException(
+            error instanceof Error ? error.message : "Organization access was denied.",
+          );
+        }
+      }
+      try {
+        await this.operations.authorizeSupportPrincipal(
+          request.principal,
+          request.method,
+          request.url,
+        );
+      } catch (error) {
+        throw new ForbiddenException(
+          error instanceof Error ? error.message : "Delegated support access was denied.",
+        );
+      }
+    } catch (error) {
+      if (error instanceof joseErrors.JWKSTimeout) {
+        throw new ServiceUnavailableException("The identity provider did not respond in time.");
+      }
+      if (
+        error instanceof joseErrors.JOSEError ||
+        error instanceof RevokedSessionError ||
+        error instanceof InactiveAccountError ||
+        error instanceof InvalidOidcClaimsError
+      ) {
+        const message =
+          error instanceof RevokedSessionError ||
+          error instanceof InactiveAccountError ||
+          error instanceof InvalidOidcClaimsError
+            ? error.message
+            : "The OIDC bearer token is invalid or expired.";
+        throw new UnauthorizedException(message);
+      }
+      throw error;
+    }
     return true;
   }
 }

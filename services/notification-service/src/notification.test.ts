@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { ActionRequest } from "@signal/contracts";
+import type { ActionRequest, DeviceCommand } from "@signal/contracts";
 
 import { DevelopmentPushSink, NotificationService } from "./index.js";
 
@@ -16,6 +16,9 @@ const action: ActionRequest = {
   risk: "R2",
   options: [],
   approverUserIds: ["usr_demo0001"],
+  approvalThreshold: 1,
+  approvedUserIds: [],
+  rejectedUserIds: [],
   state: "PENDING",
   requiresRecentAuth: false,
   expiresAt: "2026-07-18T14:00:00.000Z",
@@ -52,5 +55,35 @@ describe("notification service", () => {
       }),
     ).resolves.toEqual({ status: "SUPPRESSED_QUIET_HOURS" });
     expect(sink.messages).toHaveLength(0);
+  });
+
+  it("marks an eligible device command for headless platform delivery", async () => {
+    const sink = new DevelopmentPushSink();
+    const service = new NotificationService(sink);
+    const command: DeviceCommand = {
+      commandId: "cmd_demo0001",
+      taskId: "tsk_demo0001",
+      userId: "usr_demo0001",
+      deviceId: "dev_demo0001",
+      actionType: "create_signal_note",
+      payload: { text: "Approved note" },
+      requiredPermission: "secure_notes",
+      riskClass: "R1",
+      requiresForeground: false,
+      requiresConfirmation: false,
+      issuedAt: "2026-07-18T12:00:00.000Z",
+      expiresAt: "2026-07-18T12:15:00.000Z",
+      nonce: "n".repeat(32),
+      serverSignature: "s".repeat(64),
+    };
+    await service.notifyDeviceCommand({
+      command,
+      tenantId: "ten_demo0001",
+      deviceTokenHandle: "push_demo0001",
+    });
+    expect(sink.messages[0]?.message).toMatchObject({
+      backgroundEligible: true,
+      deepLink: `signal://device-commands/${command.commandId}`,
+    });
   });
 });

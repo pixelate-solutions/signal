@@ -1,0 +1,41 @@
+replicaCount: 2
+
+image:
+  repository: ghcr.io/actions/gha-runner-scale-set-controller
+  tag: 0.14.0@sha256:4e704fc6c59db122e4156c8a8247b8b1eb89b746ebbc14925fdf9d867f72e29a
+  pullPolicy: IfNotPresent
+
+nodeSelector:
+  signal.pixelate.dev/pool: core
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/part-of: gha-rs-controller
+
+flags:
+  logLevel: info
+  logFormat: json
+  updateStrategy: eventual

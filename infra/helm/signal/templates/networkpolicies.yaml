@@ -19,17 +19,19 @@ metadata:
     {{- include "signal.labels" . | nindent 4 }}
 spec:
   podSelector:
-    matchLabels:
-      app.kubernetes.io/part-of: signal
+    matchExpressions:
+      - key: app.kubernetes.io/part-of
+        operator: In
+        values: [signal]
+      - key: app.kubernetes.io/component
+        operator: NotIn
+        values: [sandbox-runner]
   policyTypes: ["Ingress", "Egress"]
   ingress:
     - from:
         - podSelector:
             matchLabels:
               app.kubernetes.io/part-of: signal
-        - namespaceSelector:
-            matchLabels:
-              {{- toYaml .Values.networkPolicy.ingressNamespaceLabels | nindent 14 }}
   egress:
     - to:
         - namespaceSelector: {}
@@ -47,7 +49,26 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "signal.fullname" . }}-untrusted-egress-via-proxy
+  name: {{ include "signal.fullname" . }}-api-load-balancer
+  labels:
+    {{- include "signal.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: api
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        {{- range .Values.networkPolicy.loadBalancerSourceCidrs }}
+        - ipBlock: { cidr: {{ . | quote }} }
+        {{- end }}
+      ports:
+        - { protocol: TCP, port: 3000 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "signal.fullname" . }}-https-egress
   labels:
     {{- include "signal.labels" . | nindent 4 }}
 spec:
@@ -55,13 +76,137 @@ spec:
     matchExpressions:
       - key: app.kubernetes.io/component
         operator: In
-        values: ["browser", "generated-runner"]
+        values: ["api", "workflow", "browser", "sandbox", "document", "generated-canary", "observability"]
   policyTypes: ["Egress"]
   egress:
     - to:
+        - ipBlock: { cidr: "0.0.0.0/0" }
+      ports:
+        - { protocol: TCP, port: 443 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "signal.fullname" . }}-database-egress
+  labels:
+    {{- include "signal.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: ["api", "workflow", "browser", "sandbox"]
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        {{- range .Values.networkPolicy.privateServiceCidrs }}
+        - ipBlock: { cidr: {{ . | quote }} }
+        {{- end }}
+      ports:
+        - { protocol: TCP, port: 5432 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "signal.fullname" . }}-temporal-egress
+  labels:
+    {{- include "signal.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: ["api", "workflow"]
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - ipBlock: { cidr: "0.0.0.0/0" }
+      ports:
+        - { protocol: TCP, port: 7233 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "signal.fullname" . }}-redis-egress
+  labels:
+    {{- include "signal.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: ["api", "workflow"]
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        {{- range .Values.networkPolicy.privateServiceCidrs }}
+        - ipBlock: { cidr: {{ . | quote }} }
+        {{- end }}
+      ports:
+        - { protocol: TCP, port: 6379 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "signal.fullname" . }}-clamav-update-egress
+  labels:
+    {{- include "signal.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: clamav
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - ipBlock: { cidr: "0.0.0.0/0" }
+      ports:
+        - { protocol: TCP, port: 80 }
+        - { protocol: TCP, port: 443 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "signal.fullname" . }}-migration-database
+  labels:
+    {{- include "signal.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: migration
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        {{- range .Values.networkPolicy.privateServiceCidrs }}
+        - ipBlock: { cidr: {{ . | quote }} }
+        {{- end }}
+      ports:
+        - { protocol: TCP, port: 5432 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "signal.fullname" . }}-sandbox-runner
+  labels:
+    {{- include "signal.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: sandbox-runner
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
         - podSelector:
             matchLabels:
-              {{- toYaml .Values.networkPolicy.egressProxyPodLabels | nindent 14 }}
+              app.kubernetes.io/component: sandbox
       ports:
-        - { protocol: TCP, port: 8443 }
+        - { protocol: TCP, port: 3350 }
+  egress:
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
 {{- end }}

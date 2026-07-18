@@ -1,10 +1,32 @@
 global:
   existingSecret: signal-production-runtime
   imagePullPolicy: IfNotPresent
+  imagePullSecrets:
+    - name: signal-ghcr-pull
 config:
   NODE_ENV: production
+  TEMPORAL_TLS: "true"
 ingress:
   enabled: true
   annotations:
-    nginx.ingress.kubernetes.io/proxy-body-size: 64m
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+  hosts:
+    - host: signal.example.com
+      paths:
+        - { path: /, pathType: Prefix }
+observability:
+  environment: production
+  clusterName: signal-production
+  logRetentionDays: 365
+fargateLogging:
+  enabled: true
+  awsRegion: us-east-2
+  logGroupName: /aws/eks/signal-production/fargate/isolated
+workloads:
+  sandbox-runner:
+    nodeSelector: null
+    tolerations: null

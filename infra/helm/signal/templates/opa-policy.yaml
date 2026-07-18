@@ -1,0 +1,12 @@
+{{- if .Values.workloads.opa.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "signal.fullname" . }}-opa-policy
+  labels:
+    {{- include "signal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: opa
+data:
+  authz.rego: |-
+    {{- .Files.Get "policies/authz.rego" | nindent 4 }}
+{{- end }}

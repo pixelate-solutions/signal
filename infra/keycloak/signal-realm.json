@@ -2,8 +2,17 @@
   "realm": "signal",
   "enabled": true,
   "displayName": "Signal Local Identity",
-  "registrationAllowed": false,
+  "registrationAllowed": true,
   "resetPasswordAllowed": true,
+  "rememberMe": true,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "webAuthnPolicyRpEntityName": "Signal",
+  "webAuthnPolicySignatureAlgorithms": ["ES256", "RS256"],
+  "webAuthnPolicyUserVerificationRequirement": "preferred",
+  "webAuthnPolicyPasswordlessRpEntityName": "Signal",
+  "webAuthnPolicyPasswordlessSignatureAlgorithms": ["ES256", "RS256"],
+  "webAuthnPolicyPasswordlessUserVerificationRequirement": "required",
   "roles": {
     "realm": [{ "name": "user" }, { "name": "operator" }, { "name": "tenant_admin" }]
   },
@@ -24,7 +33,46 @@
       "directAccessGrantsEnabled": false,
       "protocol": "openid-connect",
       "redirectUris": ["signal://oauth/callback", "http://localhost:8082/*"],
-      "webOrigins": ["http://localhost:8082"]
+      "webOrigins": ["http://localhost:8082"],
+      "optionalClientScopes": ["offline_access"],
+      "protocolMappers": [
+        {
+          "name": "signal-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "signal-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "signal-ops",
+      "name": "Signal Control",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "protocol": "openid-connect",
+      "redirectUris": ["http://localhost:4173/*"],
+      "webOrigins": ["http://localhost:4173"],
+      "optionalClientScopes": ["offline_access"],
+      "protocolMappers": [
+        {
+          "name": "signal-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "signal-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
     }
   ],
   "users": [

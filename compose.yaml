@@ -20,9 +20,13 @@ x-service-environment: &service-environment
   TEMPORAL_TASK_QUEUE_BROWSER: signal-browser
   TEMPORAL_TASK_QUEUE_SANDBOX: signal-sandbox
   TEMPORAL_TASK_QUEUE_DOCUMENTS: signal-documents
-  OIDC_ISSUER: http://keycloak:8080/realms/signal
+  OIDC_ISSUER: http://localhost:8080/realms/signal
+  OIDC_PUBLIC_ISSUER: http://localhost:8080/realms/signal
+  OIDC_JWKS_URL: http://keycloak:8080/realms/signal/protocol/openid-connect/certs
   OIDC_CLIENT_ID: signal-api
   OIDC_AUDIENCE: signal-api
+  OIDC_MOBILE_CLIENT_ID: signal-mobile
+  OIDC_MOBILE_REDIRECT_URI: signal://oauth/callback
   OPA_URL: http://opa:8181
   META_MODEL_API_BASE_URL: http://local-fixtures:3100/v1
   META_MODEL_API_KEY: signal-local-fixture
@@ -32,6 +36,13 @@ x-service-environment: &service-environment
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
   CLAMAV_HOST: clamav
   INTERNAL_SERVICE_TOKEN: signal-local-internal-only
+  KMS_KEY_ID: local-development-key
+  DOCUMENT_WORKER_URL: http://document-worker:3400
+  BROWSER_WORKER_URL: http://browser-worker:3200
+  API_INTERNAL_URL: http://api:3000
+  SANDBOX_CONTROLLER_URL: http://sandbox-controller:3300
+  ADAPTER_SIGNING_KEY_HANDLE: env://ADAPTER_SIGNING_KEY
+  ADAPTER_SIGNING_KEY: signal-local-generated-adapter-signing-key
 
 services:
   postgres:
@@ -232,6 +243,7 @@ services:
       temporal: { condition: service_healthy }
       opa: { condition: service_healthy }
       local-fixtures: { condition: service_healthy }
+      document-worker: { condition: service_healthy }
     healthcheck:
       test:
         [
@@ -250,11 +262,13 @@ services:
     build:
       <<: *node-build
       args: { SIGNAL_PACKAGE: "@signal/workflow-worker" }
-    command: ["node", "dist/local.js"]
+    command: ["node", "dist/production.js"]
     environment: *service-environment
     depends_on:
       temporal: { condition: service_healthy }
       api: { condition: service_healthy }
+      browser-worker: { condition: service_healthy }
+      sandbox-controller: { condition: service_healthy }
     healthcheck:
       test:
         [
@@ -279,6 +293,10 @@ services:
     ports: ["3200:3200"]
     depends_on:
       local-fixtures: { condition: service_healthy }
+      db-seed: { condition: service_completed_successfully }
+      minio-init: { condition: service_completed_successfully }
+      clamav: { condition: service_healthy }
+      document-worker: { condition: service_healthy }
     healthcheck:
       test:
         [
@@ -306,6 +324,8 @@ services:
     environment:
       <<: *service-environment
       PORT: "3300"
+      SANDBOX_EXECUTOR_URL: http://sandbox-runner:3350
+      SANDBOX_RUNNER_TOKEN: signal-local-sandbox-runner-only
     ports: ["3300:3300"]
     healthcheck:
       test:
@@ -322,7 +342,41 @@ services:
     cap_drop: ["ALL"]
     read_only: true
     tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
-    networks: [core]
+    depends_on:
+      db-seed: { condition: service_completed_successfully }
+      minio-init: { condition: service_completed_successfully }
+      sandbox-runner: { condition: service_healthy }
+    networks: [core, sandbox]
+
+  sandbox-runner:
+    build:
+      <<: *node-build
+      args: { SIGNAL_PACKAGE: "@signal/sandbox-controller" }
+    command: ["node", "dist/host.js"]
+    environment:
+      NODE_ENV: production
+      PORT: "3350"
+      SANDBOX_RUNNER_MODE: "true"
+      SANDBOX_RUNNER_TOKEN: signal-local-sandbox-runner-only
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3350/health').then(r=>{if(!r.ok)process.exit(1)})",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=256m"]
+    pids_limit: 64
+    mem_limit: 512m
+    cpus: 1
+    networks: [sandbox]
 
   document-worker:
     build:
@@ -425,6 +479,8 @@ networks:
   edge: {}
   core: {}
   untrusted: {}
+  sandbox:
+    internal: true
 
 volumes:
   postgres-data: {}

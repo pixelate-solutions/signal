@@ -31,8 +31,13 @@ export class ConnectionsController {
   public constructor(@Inject(CONNECTION_MANAGER) private readonly connections: ConnectionManager) {}
 
   @Get()
-  public list(@RequestPrincipal() principal: Principal) {
-    return { items: this.connections.list(principal), nextCursor: null };
+  public async list(@RequestPrincipal() principal: Principal) {
+    return { items: await this.connections.list(principal), nextCursor: null };
+  }
+
+  @Post("monitor")
+  public async monitor(@RequestPrincipal() principal: Principal) {
+    return { items: await this.connections.monitor(principal), nextCursor: null };
   }
 
   @Post("link")
@@ -51,8 +56,16 @@ export class ConnectionsController {
   }
 
   @Post(":id/reauthenticate")
-  public reauthenticate(@RequestPrincipal() principal: Principal, @Param("id") id: string) {
-    return this.connections.setStatus(principal, id, "ACTION_REQUIRED");
+  public reauthenticate(
+    @RequestPrincipal() principal: Principal,
+    @Param("id") id: string,
+    @Body() body: { returnDeepLink?: string },
+  ) {
+    return this.connections.reauthenticate(
+      principal,
+      id,
+      body.returnDeepLink ?? "signal://settings/connections",
+    );
   }
 
   @Post(":id/revoke")

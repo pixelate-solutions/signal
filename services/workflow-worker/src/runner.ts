@@ -19,34 +19,38 @@ export async function runDeterministicTaskHarness(
     lastObservation: null,
     cancelRequested: false,
     emergencyStopped: false,
+    approvedMaterialDigests: {},
+    secureInputHandles: {},
+    stepOverrides: {},
   };
+  const task = { taskId, tenantId: "ten_harness0001" };
 
   if (checkpoint.state === "CREATED") {
-    await activities.initializeTask(taskId);
-    await activities.transitionTask(taskId, "PLANNING");
+    await activities.initializeTask(task);
+    await activities.transitionTask(task, "PLANNING");
     checkpoint = { ...checkpoint, state: "PLANNING" };
   }
-  const plan: Plan = await activities.retrieveAndPlan(taskId);
+  const plan: Plan = await activities.retrieveAndPlan(task);
   if (checkpoint.state !== "RUNNING") {
-    await activities.transitionTask(taskId, "RUNNING");
+    await activities.transitionTask(task, "RUNNING");
     checkpoint = { ...checkpoint, state: "RUNNING" };
   }
 
   while (checkpoint.iteration < 30) {
     const next = plan.steps.find((step) => !checkpoint.completedStepIds.includes(step.id));
     if (next === undefined) {
-      const verification = await activities.verifyOutcome(taskId, plan);
+      const verification = await activities.verifyOutcome(task, plan);
       if (!verification.passed) {
-        await activities.failTask(taskId, verification.summary);
+        await activities.failTask(task, verification.summary);
         return { ...checkpoint, state: "FAILED", lastObservation: verification.summary };
       }
-      await activities.completeTask(taskId, verification);
+      await activities.completeTask(task, verification);
       return {
         ...checkpoint,
         state: verification.warnings.length > 0 ? "COMPLETED_WITH_WARNINGS" : "COMPLETED",
       };
     }
-    const outcome: StepOutcome = await activities.executeStep(taskId, next, checkpoint.iteration);
+    const outcome: StepOutcome = await activities.executeStep(task, next, checkpoint.iteration);
     if (outcome.kind !== "completed") {
       throw new Error(
         `The deterministic crash harness only accepts completed steps, got ${outcome.kind}.`,
@@ -58,7 +62,7 @@ export async function runDeterministicTaskHarness(
       completedStepIds: [...checkpoint.completedStepIds, outcome.stepId],
       lastObservation: outcome.observation,
     };
-    await activities.persistCheckpoint(taskId, checkpoint);
+    await activities.persistCheckpoint(task, checkpoint);
     if (interruption !== undefined && checkpoint.iteration === interruption.afterIteration) {
       throw new HarnessCrash(checkpoint);
     }

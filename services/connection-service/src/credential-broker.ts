@@ -1,5 +1,13 @@
 import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from "node:crypto";
 
+import {
+  InMemoryTenantRecordStore,
+  type TenantRecordStore,
+  type TenantRecordTransaction,
+} from "@signal/persistence";
+
+const CREDENTIAL_NAMESPACE = "connection.credentials";
+
 export type SecretStore = {
   put(key: string, plaintext: Uint8Array): Promise<void>;
   get(key: string): Promise<Uint8Array | undefined>;
@@ -40,15 +48,16 @@ export type CredentialMetadata = {
   tenantId: string;
   ownerUserId: string;
   provider: string;
-  secretType: "oauth_refresh_token" | "api_key" | "password" | "browser_state";
+  secretType: "oauth_refresh_token" | "api_key" | "password" | "browser_state" | "push_token";
   secretStoreKey: string;
   status: "ACTIVE" | "REVOKED";
   createdAt: string;
+  updatedAt: string;
 };
 
 export type CredentialAudit = {
   record(entry: {
-    action: "credential.created" | "credential.used" | "credential.revoked";
+    action: "credential.created" | "credential.used" | "credential.rotated" | "credential.revoked";
     credentialHandleId: string;
     tenantId: string;
     taskId?: string;
@@ -59,26 +68,29 @@ export type CredentialAudit = {
 const noAudit: CredentialAudit = { record: async () => undefined };
 
 export class CredentialBroker {
-  readonly #metadata = new Map<string, CredentialMetadata>();
-
   public constructor(
     private readonly store: SecretStore,
     private readonly audit: CredentialAudit = noAudit,
+    private readonly records: TenantRecordStore = new InMemoryTenantRecordStore(),
   ) {}
 
   public async create(
-    input: Omit<CredentialMetadata, "id" | "secretStoreKey" | "status" | "createdAt">,
+    input: Omit<CredentialMetadata, "id" | "secretStoreKey" | "status" | "createdAt" | "updatedAt">,
     plaintext: string,
   ): Promise<string> {
     const id = `cred_${randomUUID().replaceAll("-", "")}`;
     const secretStoreKey = `signal/${input.tenantId}/${id}`;
     await this.store.put(secretStoreKey, new TextEncoder().encode(plaintext));
-    this.#metadata.set(id, {
-      ...input,
-      id,
-      secretStoreKey,
-      status: "ACTIVE",
-      createdAt: new Date().toISOString(),
+    const now = new Date().toISOString();
+    await this.records.runExclusive(input.tenantId, async (transaction) => {
+      await transaction.put(CREDENTIAL_NAMESPACE, id, {
+        ...input,
+        id,
+        secretStoreKey,
+        status: "ACTIVE",
+        createdAt: now,
+        updatedAt: now,
+      } satisfies CredentialMetadata);
     });
     await this.audit.record({
       action: "credential.created",
@@ -88,13 +100,11 @@ export class CredentialBroker {
     return id;
   }
 
-  public async available(id: string, tenantId?: string): Promise<boolean> {
-    const metadata = this.#metadata.get(id);
-    return (
-      metadata !== undefined &&
-      metadata.status === "ACTIVE" &&
-      (tenantId === undefined || metadata.tenantId === tenantId)
-    );
+  public async available(id: string, tenantId: string): Promise<boolean> {
+    return this.records.runExclusive(tenantId, async (transaction) => {
+      const metadata = await transaction.get<CredentialMetadata>(CREDENTIAL_NAMESPACE, id);
+      return metadata?.status === "ACTIVE";
+    });
   }
 
   public async withCredential<T>(
@@ -102,14 +112,9 @@ export class CredentialBroker {
     context: { tenantId: string; taskId: string; adapter: string },
     operation: (plaintext: string) => Promise<T>,
   ): Promise<T> {
-    const metadata = this.#metadata.get(id);
-    if (
-      metadata === undefined ||
-      metadata.status !== "ACTIVE" ||
-      metadata.tenantId !== context.tenantId
-    ) {
-      throw new Error("CONNECTION_REQUIRED: credential handle is unavailable.");
-    }
+    const metadata = await this.records.runExclusive(context.tenantId, (transaction) =>
+      this.requireActive(transaction, id),
+    );
     const raw = await this.store.get(metadata.secretStoreKey);
     if (raw === undefined) {
       throw new Error("CONNECTION_REQUIRED: encrypted credential material is unavailable.");
@@ -121,14 +126,44 @@ export class CredentialBroker {
       taskId: context.taskId,
       adapter: context.adapter,
     });
-    return operation(new TextDecoder().decode(raw));
+    try {
+      return await operation(new TextDecoder().decode(raw));
+    } finally {
+      raw.fill(0);
+    }
+  }
+
+  public async rotate(id: string, tenantId: string, plaintext: string): Promise<void> {
+    const metadata = await this.records.runExclusive(tenantId, (transaction) =>
+      this.requireActive(transaction, id),
+    );
+    await this.store.put(metadata.secretStoreKey, new TextEncoder().encode(plaintext));
+    await this.records.runExclusive(tenantId, async (transaction) => {
+      await transaction.put(CREDENTIAL_NAMESPACE, id, {
+        ...metadata,
+        updatedAt: new Date().toISOString(),
+      } satisfies CredentialMetadata);
+    });
+    await this.audit.record({
+      action: "credential.rotated",
+      credentialHandleId: id,
+      tenantId,
+    });
   }
 
   public async revoke(id: string, tenantId: string): Promise<void> {
-    const metadata = this.#metadata.get(id);
-    if (metadata === undefined || metadata.tenantId !== tenantId) return;
+    const metadata = await this.records.runExclusive(tenantId, (transaction) =>
+      transaction.get<CredentialMetadata>(CREDENTIAL_NAMESPACE, id),
+    );
+    if (metadata === undefined) return;
     await this.store.delete(metadata.secretStoreKey);
-    this.#metadata.set(id, { ...metadata, status: "REVOKED" });
+    await this.records.runExclusive(tenantId, async (transaction) => {
+      await transaction.put(CREDENTIAL_NAMESPACE, id, {
+        ...metadata,
+        status: "REVOKED",
+        updatedAt: new Date().toISOString(),
+      } satisfies CredentialMetadata);
+    });
     await this.audit.record({
       action: "credential.revoked",
       credentialHandleId: id,
@@ -136,10 +171,26 @@ export class CredentialBroker {
     });
   }
 
-  public metadata(id: string): Omit<CredentialMetadata, "secretStoreKey"> | undefined {
-    const value = this.#metadata.get(id);
+  public async metadata(
+    id: string,
+    tenantId: string,
+  ): Promise<Omit<CredentialMetadata, "secretStoreKey"> | undefined> {
+    const value = await this.records.runExclusive(tenantId, (transaction) =>
+      transaction.get<CredentialMetadata>(CREDENTIAL_NAMESPACE, id),
+    );
     if (value === undefined) return undefined;
     const { secretStoreKey: _secretStoreKey, ...safe } = value;
     return safe;
+  }
+
+  private async requireActive(
+    transaction: TenantRecordTransaction,
+    id: string,
+  ): Promise<CredentialMetadata> {
+    const metadata = await transaction.get<CredentialMetadata>(CREDENTIAL_NAMESPACE, id);
+    if (metadata === undefined || metadata.status !== "ACTIVE") {
+      throw new Error("CONNECTION_REQUIRED: credential handle is unavailable.");
+    }
+    return metadata;
   }
 }

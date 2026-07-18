@@ -5,6 +5,10 @@
     "rootDir": "src",
     "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
-  "references": [{ "path": "../../packages/contracts" }, { "path": "../../packages/event-sdk" }],
+  "references": [
+    { "path": "../../packages/contracts" },
+    { "path": "../../packages/event-sdk" },
+    { "path": "../../packages/persistence" }
+  ],
   "include": ["src/**/*.ts"]
 }

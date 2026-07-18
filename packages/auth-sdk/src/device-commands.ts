@@ -70,11 +70,29 @@ export class DeviceCommandProtocol {
   }
 
   public verifyResult(rawResult: unknown): DeviceCommandResult {
-    const result = deviceCommandResultSchema.parse(rawResult);
-    const command = this.#commands.get(result.commandId);
+    const parsed = deviceCommandResultSchema.parse(rawResult);
+    const command = this.#commands.get(parsed.commandId);
     if (command === undefined) throw new Error("Device command is unknown or no longer active.");
     const publicKey = this.#deviceKeys.get(command.deviceId);
     if (publicKey === undefined) throw new Error("Device signing key is unavailable.");
+    const result = this.verifyResultFor(command, encode(publicKey), parsed);
+    this.#commands.delete(result.commandId);
+    return result;
+  }
+
+  public verifyResultFor(
+    command: DeviceCommand,
+    devicePublicKey: string,
+    rawResult: unknown,
+  ): DeviceCommandResult {
+    const result = deviceCommandResultSchema.parse(rawResult);
+    if (result.commandId !== command.commandId) {
+      throw new Error("Device result does not match the issued command.");
+    }
+    const publicKey = decode(devicePublicKey);
+    if (publicKey.byteLength !== nacl.sign.publicKeyLength) {
+      throw new Error("Invalid device signing key.");
+    }
     const { deviceSignature, ...material } = result;
     if (
       !nacl.sign.detached.verify(
@@ -88,7 +106,6 @@ export class DeviceCommandProtocol {
     if (new Date(result.completedAt) > new Date(command.expiresAt)) {
       throw new Error("Device result arrived after command expiry.");
     }
-    this.#commands.delete(result.commandId);
     return result;
   }
 }

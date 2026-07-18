@@ -85,6 +85,27 @@ export function createSignalTestStateAdapters(
         usage: { durationMs: 1, costMinor: 0, currency: "USD" },
       };
     },
+    verify: async (input, result) => {
+      const observed = provider.read(String(input["key"]));
+      const expected = result.data as
+        { value?: unknown; confirmationId?: unknown } | null | undefined;
+      const passed =
+        result.status === "SUCCEEDED" &&
+        expected !== null &&
+        expected !== undefined &&
+        observed.value === expected.value &&
+        observed.confirmationId === expected.confirmationId;
+      const evidence = { provider: "signal-test-state", ...observed, passed };
+      return {
+        ...result,
+        status: passed ? "SUCCEEDED" : "FAILED",
+        sanitizedMessage: passed
+          ? result.sanitizedMessage
+          : "The isolated provider read changed before verification completed.",
+        errorClass: passed ? "none" : "unknown",
+        evidenceIds: [...result.evidenceIds, evidenceId(evidence)],
+      };
+    },
   };
 
   const write: ToolAdapter = {
@@ -130,6 +151,30 @@ export function createSignalTestStateAdapters(
         evidenceIds: [evidenceId(evidence)],
         verificationHint: "Read the key again through signal_test_state.read.",
         usage: { durationMs: 1, costMinor: 0, currency: "USD" },
+      };
+    },
+    verify: async (input, result) => {
+      const observed = provider.read(String(input["key"]));
+      const expected = result.data as
+        { value?: unknown; confirmationId?: unknown } | null | undefined;
+      const passed =
+        result.status === "SUCCEEDED" &&
+        expected !== null &&
+        expected !== undefined &&
+        observed.value === String(input["value"]) &&
+        observed.value === expected.value &&
+        observed.confirmationId === expected.confirmationId;
+      const evidence = { provider: "signal-test-state", ...observed, passed };
+      return {
+        ...result,
+        status: passed ? "SUCCEEDED" : "FAILED",
+        sanitizedMessage: passed
+          ? "The isolated provider write was independently verified."
+          : "The isolated provider state did not match the approved write.",
+        errorClass: passed ? "none" : "unknown",
+        sideEffectState: passed ? "definitely_completed" : "unknown",
+        evidenceIds: [...result.evidenceIds, evidenceId(evidence)],
+        verificationHint: passed ? "Verified by an independent provider read." : "Do not retry.",
       };
     },
   };

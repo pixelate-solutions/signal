@@ -9,6 +9,7 @@ import {
   CredentialBroker,
   InMemoryEncryptedSecretStore,
   NativeOAuthProvider,
+  parseComposioAuthConfigs,
 } from "./index.js";
 
 const principal: Principal = {
@@ -41,7 +42,9 @@ describe("credential broker", () => {
       "test-refresh-token",
     );
     expect(handle).toMatch(/^cred_/);
-    expect(JSON.stringify(broker.metadata(handle))).not.toContain("test-refresh-token");
+    expect(JSON.stringify(await broker.metadata(handle, "ten_demo0001"))).not.toContain(
+      "test-refresh-token",
+    );
     await expect(
       broker.withCredential(
         handle,
@@ -125,6 +128,21 @@ describe("native OAuth PKCE", () => {
 });
 
 describe("connection lifecycle", () => {
+  it("rejects an external OAuth return redirect", async () => {
+    const manager = new ConnectionManager({
+      publicBaseUrl: "https://signal.example",
+      demoMode: true,
+    });
+    await expect(
+      manager.link(principal, {
+        provider: "google",
+        toolkit: "gmail",
+        requestedScopes: ["gmail.readonly"],
+        returnDeepLink: "https://evil.example/oauth-complete",
+      }),
+    ).rejects.toThrow();
+  });
+
   it("Scenario B: links once, reuses the active connection, and revokes it atomically", async () => {
     const manager = new ConnectionManager({
       publicBaseUrl: "https://signal.example",
@@ -141,19 +159,261 @@ describe("connection lifecycle", () => {
     expect(linked.connection).toMatchObject({ provider: "google", status: "ACTIVE" });
 
     // A later conversation discovers and reuses the authoritative active connection.
-    expect(manager.list(principal)).toEqual([
+    expect(await manager.list(principal)).toEqual([
       expect.objectContaining({ id: linked.connection.id, status: "ACTIVE", isDefault: true }),
     ]);
 
     await expect(
       manager.setStatus(principal, linked.connection.id, "REVOKED"),
     ).resolves.toMatchObject({ status: "REVOKED" });
-    expect(manager.list(principal).find((item) => item.id === linked.connection.id)?.status).toBe(
-      "REVOKED",
-    );
+    expect(
+      (await manager.list(principal)).find((item) => item.id === linked.connection.id)?.status,
+    ).toBe("REVOKED");
     await expect(manager.setStatus(principal, linked.connection.id, "ACTIVE")).rejects.toThrow(
       "linked again",
     );
+  });
+
+  it("reauthenticates in place through a fresh one-time OAuth exchange", async () => {
+    const manager = new ConnectionManager({
+      publicBaseUrl: "https://signal.example",
+      demoMode: true,
+    });
+    const first = await manager.link(principal, {
+      provider: "google",
+      toolkit: "gmail",
+      requestedScopes: ["gmail.readonly"],
+      returnDeepLink: "signal://settings/connections",
+    });
+    const original = await manager.callback({ state: first.state, code: "first-code" });
+    const replacement = await manager.reauthenticate(
+      principal,
+      original.connection.id,
+      "signal://settings/connections",
+    );
+    const refreshed = await manager.callback({ state: replacement.state, code: "second-code" });
+
+    expect(refreshed.connection.id).toBe(original.connection.id);
+    expect(refreshed.connection.credentialHandle).not.toBe(original.connection.credentialHandle);
+    await expect(manager.list(principal)).resolves.toEqual([
+      expect.objectContaining({ id: original.connection.id, status: "ACTIVE" }),
+    ]);
+  });
+
+  it("links, monitors, toggles, and revokes a mapped Composio account", async () => {
+    const calls: string[] = [];
+    const manager = new ConnectionManager(
+      {
+        publicBaseUrl: "https://signal.example",
+        demoMode: false,
+        composioCallbackUrl: "https://signal.example/v1/connections/callback",
+        composioAuthConfigs: { slack: "ac_slack_production" },
+      },
+      {
+        composio: {
+          link: async ({ authConfigId, callbackUrl }) => {
+            calls.push(`link:${authConfigId}:${new URL(callbackUrl).searchParams.has("state")}`);
+            return {
+              id: "creq_slack_0001",
+              redirectUrl: "https://backend.composio.dev/link/creq_slack_0001",
+            };
+          },
+          account: async (id) => {
+            calls.push(`account:${id}`);
+            return { id, status: "ACTIVE", toolkit: "slack" };
+          },
+          complete: async (id) => {
+            calls.push(`complete:${id}`);
+            return { id: "ca_slack_0001", status: "ACTIVE", toolkit: "slack" };
+          },
+          setEnabled: async (id, enabled) => {
+            calls.push(`enabled:${id}:${enabled}`);
+          },
+          revoke: async (id) => {
+            calls.push(`revoke:${id}`);
+          },
+          execute: async () => ({
+            successful: true,
+            data: { ok: true },
+            error: null,
+            logId: "log_slack_0001",
+          }),
+        },
+      },
+    );
+    const started = await manager.link(principal, {
+      provider: "slack",
+      toolkit: "slack",
+      requestedScopes: ["chat:write"],
+      returnDeepLink: "signal://settings/connections",
+    });
+    const linked = await manager.callback({ state: started.state });
+    expect(linked.connection).toMatchObject({
+      source: "composio",
+      status: "ACTIVE",
+      externalAccountId: "ca_slack_0001",
+    });
+    await expect(
+      manager.composioAccountId(
+        principal.tenantId,
+        linked.connection.id,
+        "tsk_demo0001",
+        "slack.message.send",
+      ),
+    ).resolves.toBe("ca_slack_0001");
+    await manager.setStatus(principal, linked.connection.id, "DISABLED");
+    await manager.setStatus(principal, linked.connection.id, "ACTIVE");
+    await manager.setStatus(principal, linked.connection.id, "REVOKED");
+    expect(calls).toEqual([
+      "link:ac_slack_production:true",
+      "complete:creq_slack_0001",
+      "account:ca_slack_0001",
+      "enabled:ca_slack_0001:false",
+      "enabled:ca_slack_0001:true",
+      "revoke:ca_slack_0001",
+    ]);
+    await expect(
+      manager.composioAccountId(
+        principal.tenantId,
+        linked.connection.id,
+        "tsk_demo0001",
+        "slack.message.send",
+      ),
+    ).rejects.toThrow("CONNECTION_REQUIRED");
+  });
+
+  it("revokes the superseded Composio account when reauthentication swaps accounts", async () => {
+    const revoked: string[] = [];
+    let completed = 0;
+    const manager = new ConnectionManager(
+      {
+        publicBaseUrl: "https://signal.example",
+        demoMode: false,
+        composioCallbackUrl: "https://signal.example/v1/connections/callback",
+        composioAuthConfigs: { slack: "ac_slack_production" },
+      },
+      {
+        composio: {
+          link: async () => ({
+            id: `creq_slack_${completed + 1}`,
+            redirectUrl: "https://backend.composio.dev/link/fixture",
+          }),
+          account: async (id) => ({ id, status: "ACTIVE", toolkit: "slack" }),
+          complete: async () => {
+            completed += 1;
+            return { id: `ca_slack_${completed}`, status: "ACTIVE", toolkit: "slack" };
+          },
+          setEnabled: async () => undefined,
+          revoke: async (id) => {
+            revoked.push(id);
+          },
+          execute: async () => ({ successful: true, data: {}, error: null, logId: null }),
+        },
+      },
+    );
+    const first = await manager.link(principal, {
+      provider: "slack",
+      toolkit: "slack",
+      requestedScopes: ["chat:write"],
+      returnDeepLink: "signal://settings/connections",
+    });
+    const original = await manager.callback({ state: first.state });
+    const second = await manager.reauthenticate(
+      principal,
+      original.connection.id,
+      "signal://settings/connections",
+    );
+    const refreshed = await manager.callback({ state: second.state });
+
+    expect(refreshed.connection).toMatchObject({
+      id: original.connection.id,
+      externalAccountId: "ca_slack_2",
+    });
+    expect(revoked).toEqual(["ca_slack_1"]);
+  });
+
+  it("probes and revokes a native Google authorization upstream", async () => {
+    const calls: { url: string; method: string; body: string }[] = [];
+    const manager = new ConnectionManager({
+      publicBaseUrl: "https://signal.example",
+      demoMode: false,
+      googleOAuth: {
+        clientId: "google-client.apps.googleusercontent.com",
+        resolveClientSecret: async () => "google-client-secret",
+      },
+      fetcher: async (input, init) => {
+        const url =
+          input instanceof Request ? input.url : input instanceof URL ? input.toString() : input;
+        const requestBody = init?.body;
+        calls.push({
+          url,
+          method: init?.method ?? "GET",
+          body:
+            requestBody instanceof URLSearchParams
+              ? requestBody.toString()
+              : typeof requestBody === "string"
+                ? requestBody
+                : "",
+        });
+        if (url === "https://oauth2.googleapis.com/token") {
+          return new Response(
+            JSON.stringify({
+              access_token: "google-access-token",
+              refresh_token: "google-refresh-token",
+              expires_in: 3600,
+              token_type: "Bearer",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (url.startsWith("https://oauth2.googleapis.com/tokeninfo")) {
+          return new Response(
+            JSON.stringify({ audience: "google-client.apps.googleusercontent.com" }),
+            {
+              status: 200,
+            },
+          );
+        }
+        if (url === "https://oauth2.googleapis.com/revoke") {
+          return new Response(null, { status: 200 });
+        }
+        return new Response(null, { status: 404 });
+      },
+    });
+    const started = await manager.link(principal, {
+      provider: "google",
+      toolkit: "gmail",
+      requestedScopes: ["https://www.googleapis.com/auth/gmail.readonly"],
+      returnDeepLink: "signal://settings/connections",
+    });
+    const linked = await manager.callback({ state: started.state, code: "google-code" });
+    await expect(manager.monitor(principal)).resolves.toEqual([
+      expect.objectContaining({ id: linked.connection.id, status: "ACTIVE" }),
+    ]);
+    await manager.setStatus(principal, linked.connection.id, "REVOKED");
+    expect(calls.map((call) => `${call.method} ${new URL(call.url).pathname}`)).toEqual([
+      "POST /token",
+      "GET /tokeninfo",
+      "POST /revoke",
+    ]);
+    expect(calls[2]?.body).toBe("token=google-refresh-token");
+  });
+
+  it("does not expose or mutate another member's tenant connection", async () => {
+    const manager = new ConnectionManager({
+      publicBaseUrl: "https://signal.example",
+      demoMode: true,
+    });
+    const started = await manager.link(principal, {
+      provider: "google",
+      toolkit: "gmail",
+      requestedScopes: ["gmail.readonly"],
+      returnDeepLink: "signal://settings/connections",
+    });
+    const { connection } = await manager.callback({ state: started.state });
+    const member: Principal = { ...principal, userId: "usr_other0001", roles: ["member"] };
+    await expect(manager.list(member)).resolves.toHaveLength(0);
+    await expect(manager.setStatus(member, connection.id, "REVOKED")).rejects.toThrow("not found");
   });
 
   it("denies cross-tenant connection mutation", async () => {
@@ -169,9 +429,19 @@ describe("connection lifecycle", () => {
     });
     const { connection } = await manager.callback({ state: started.state });
     const intruder = { ...principal, tenantId: "ten_other0001", userId: "usr_other0001" };
-    expect(manager.list(intruder)).toHaveLength(0);
+    await expect(manager.list(intruder)).resolves.toHaveLength(0);
     await expect(manager.setStatus(intruder, connection.id, "REVOKED")).rejects.toThrow(
-      "another tenant",
+      "not found",
     );
+  });
+});
+
+describe("Composio configuration", () => {
+  it("accepts only non-empty provider-to-auth-config mappings", () => {
+    expect(parseComposioAuthConfigs('{"slack":"ac_slack_production"}')).toEqual({
+      slack: "ac_slack_production",
+    });
+    expect(() => parseComposioAuthConfigs("[]")).toThrow("JSON object");
+    expect(() => parseComposioAuthConfigs('{"slack":""}')).toThrow("map provider names");
   });
 });

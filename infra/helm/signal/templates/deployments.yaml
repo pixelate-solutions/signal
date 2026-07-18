@@ -41,6 +41,14 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with $workload.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $workload.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: topology.kubernetes.io/zone
@@ -56,16 +64,29 @@ spec:
           imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
           command:
             {{- toYaml $workload.command | nindent 12 }}
+          {{- with $workload.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "signal.fullname" $ }}-runtime
-            {{- if $.Values.global.existingSecret }}
-            - secretRef:
-                name: {{ $.Values.global.existingSecret }}
-            {{- end }}
           env:
             - name: PORT
               value: {{ $workload.port | quote }}
+            {{- range $key, $value := $workload.env }}
+            - name: {{ $key }}
+              value: {{ tpl ($value | toString) $ | quote }}
+            {{- end }}
+            {{- if $.Values.global.existingSecret }}
+            {{- range $key := $workload.secretKeys }}
+            - name: {{ $key }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.global.existingSecret }}
+                  key: {{ $key }}
+            {{- end }}
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ $workload.port }}
@@ -75,7 +96,7 @@ spec:
             failureThreshold: 30
             periodSeconds: 5
           readinessProbe:
-            httpGet: { path: {{ $workload.healthPath }}, port: http }
+            httpGet: { path: {{ default $workload.healthPath $workload.readinessPath }}, port: http }
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 3
@@ -94,9 +115,29 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            {{- if and (eq $name "document") $.Values.global.existingSecret }}
+            - name: transcription-token
+              mountPath: /var/run/secrets/signal
+              readOnly: true
+            {{- end }}
+            {{- with $workload.extraVolumeMounts }}
+            {{- tpl (toYaml .) $ | nindent 12 }}
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir:
             sizeLimit: {{ default "512Mi" $workload.tempSizeLimit }}
+        {{- if and (eq $name "document") $.Values.global.existingSecret }}
+        - name: transcription-token
+          secret:
+            secretName: {{ $.Values.global.existingSecret }}
+            defaultMode: 288
+            items:
+              - key: TRANSCRIPTION_API_TOKEN
+                path: transcription-token
+        {{- end }}
+        {{- with $workload.extraVolumes }}
+        {{- tpl (toYaml .) $ | nindent 8 }}
+        {{- end }}
 {{- end }}
 {{- end }}

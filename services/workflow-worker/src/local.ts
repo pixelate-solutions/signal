@@ -17,11 +17,17 @@ const plan: Plan = {
     {
       id: "local-observe",
       description: "Observe deterministic local state.",
+      desiredCapability: "signal_test_state.read",
+      input: { key: "local" },
+      connectionProvider: null,
       sideEffecting: false,
     },
     {
       id: "local-verify",
       description: "Verify deterministic local state independently.",
+      desiredCapability: "signal_test_state.read",
+      input: { key: "local" },
+      connectionProvider: null,
       sideEffecting: false,
     },
   ],
@@ -41,41 +47,42 @@ const log = (event: string, taskId: string, detail: Record<string, unknown> = {}
 };
 
 const activities: WorkflowActivities = {
-  initializeTask: async (taskId) => log("task.initialized", taskId),
-  transitionTask: async (taskId, state: TaskState) => log("task.transitioned", taskId, { state }),
-  retrieveAndPlan: async (taskId) => {
-    log("task.plan_created", taskId);
+  initializeTask: async (task) => log("task.initialized", task.taskId),
+  transitionTask: async (task, state: TaskState) =>
+    log("task.transitioned", task.taskId, { state }),
+  retrieveAndPlan: async (task) => {
+    log("task.plan_created", task.taskId);
     return plan;
   },
-  executeStep: async (taskId, step) => {
-    log("step.completed", taskId, { stepId: step.id });
+  executeStep: async (task, step) => {
+    log("step.completed", task.taskId, { stepId: step.id });
     return { kind: "completed", stepId: step.id, observation: `Verified ${step.id}.` };
   },
-  createActionRequest: async (taskId) => {
-    log("action.required", taskId);
-    return `act_local_${taskId}`;
+  createActionRequest: async (task) => {
+    log("action.required", task.taskId);
+    return `act_local_${task.taskId}`;
   },
-  recordInstruction: async (taskId) => log("instruction.recorded", taskId),
-  recordExternalEvent: async (taskId) => log("external_event.recorded", taskId),
-  verifyOutcome: async (taskId): Promise<VerificationOutcome> => {
-    log("verification.succeeded", taskId);
+  recordInstruction: async (task) => log("instruction.recorded", task.taskId),
+  recordExternalEvent: async (task) => log("external_event.recorded", task.taskId),
+  verifyOutcome: async (task): Promise<VerificationOutcome> => {
+    log("verification.succeeded", task.taskId);
     return {
       passed: true,
       warnings: [],
-      evidenceIds: [`evd_local_${taskId}`],
+      evidenceIds: [`evd_local_${task.taskId}`],
       summary: "Local fixture state verified.",
     };
   },
-  completeTask: async (taskId) => log("task.completed", taskId),
-  failTask: async (taskId, reason) => log("task.failed", taskId, { reason }),
-  persistCheckpoint: async (taskId, checkpoint) => {
-    checkpoints.set(taskId, structuredClone(checkpoint));
-    log("checkpoint.persisted", taskId, {
+  completeTask: async (task) => log("task.completed", task.taskId),
+  failTask: async (task, reason) => log("task.failed", task.taskId, { reason }),
+  persistCheckpoint: async (task, checkpoint) => {
+    checkpoints.set(task.taskId, structuredClone(checkpoint));
+    log("checkpoint.persisted", task.taskId, {
       state: checkpoint.state,
       iteration: checkpoint.iteration,
     });
   },
-  revokeTaskLeases: async (taskId, reason) => log("leases.revoked", taskId, { reason }),
+  revokeTaskLeases: async (task, reason) => log("leases.revoked", task.taskId, { reason }),
 };
 
 let ready = false;

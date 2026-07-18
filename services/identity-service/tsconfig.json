@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "tsBuildInfoFile": "dist/.tsbuildinfo"
+  },
+  "references": [
+    { "path": "../../packages/auth-sdk" },
+    { "path": "../../packages/database" },
+    { "path": "../../packages/persistence" }
+  ],
+  "include": ["src/**/*.ts"]
+}

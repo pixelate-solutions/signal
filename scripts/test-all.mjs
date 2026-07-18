@@ -75,15 +75,36 @@ run("docker", [
   "/work/infra/helm/signal",
 ]);
 
-const terraform = spawnSync("terraform", ["version"], { stdio: "ignore" });
-if (terraform.status === 0) {
+const terraform = spawnSync("terraform", ["version", "-json"], { encoding: "utf8" });
+const terraformDetails =
+  terraform.status === 0
+    ? /** @type {{ terraform_version?: unknown }} */ (JSON.parse(terraform.stdout))
+    : {};
+const terraformVersion =
+  typeof terraformDetails.terraform_version === "string"
+    ? terraformDetails.terraform_version.split(".").map(Number)
+    : undefined;
+const localTerraformSupported =
+  Array.isArray(terraformVersion) &&
+  (terraformVersion[0] > 1 || (terraformVersion[0] === 1 && terraformVersion[1] >= 10));
+if (localTerraformSupported) {
   run("terraform", ["-chdir=infra/terraform/aws", "fmt", "-check", "-recursive"]);
   run("terraform", ["-chdir=infra/terraform/aws", "init", "-backend=false", "-input=false"]);
   run("terraform", ["-chdir=infra/terraform/aws", "validate"]);
 } else {
-  process.stdout.write(
-    "Terraform is not installed; Docker/OPA/Helm validations passed, Terraform validation was skipped.\n",
-  );
+  process.stdout.write("A compatible local Terraform was not found; validating with 1.12.2.\n");
+  const terraformContainer = [
+    "run",
+    "--rm",
+    "--volume",
+    `${root}:/work`,
+    "--workdir",
+    "/work/infra/terraform/aws",
+    "hashicorp/terraform:1.12.2",
+  ];
+  run("docker", [...terraformContainer, "fmt", "-check", "-recursive"]);
+  run("docker", [...terraformContainer, "init", "-backend=false", "-input=false"]);
+  run("docker", [...terraformContainer, "validate"]);
 }
 
 process.stdout.write("\nSignal complete test suite passed.\n");

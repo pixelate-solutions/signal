@@ -75,6 +75,26 @@ export const createMemorySchema = memoryItemSchema
   })
   .strict();
 
+export const proposeMemorySchema = memoryItemSchema
+  .pick({
+    kind: true,
+    subject: true,
+    predicate: true,
+    object: true,
+    canonicalText: true,
+    scope: true,
+    sensitivity: true,
+    validFrom: true,
+    validTo: true,
+    expiresAt: true,
+    sourceIds: true,
+  })
+  .extend({
+    explicitness: z.literal("inferred").default("inferred"),
+    confidence: z.number().min(0).max(0.99),
+  })
+  .strict();
+
 export const updateMemorySchema = z
   .object({
     object: publicJsonValueSchema.optional(),
@@ -88,3 +108,4 @@ export const updateMemorySchema = z
 
 export type MemoryItem = z.infer<typeof memoryItemSchema>;
 export type CreateMemory = z.infer<typeof createMemorySchema>;
+export type ProposeMemory = z.infer<typeof proposeMemorySchema>;

@@ -2,10 +2,22 @@ name: Infrastructure
 
 on:
   pull_request:
-    paths: ["compose.yaml", "infra/**", ".github/workflows/infrastructure.yml"]
+    paths:
+      - "compose.yaml"
+      - "infra/**"
+      - "scripts/bootstrap-terraform-state.sh"
+      - "scripts/commission-*.sh"
+      - "scripts/deploy-migrations.sh"
+      - ".github/workflows/infrastructure.yml"
   push:
     branches: [main]
-    paths: ["compose.yaml", "infra/**", ".github/workflows/infrastructure.yml"]
+    paths:
+      - "compose.yaml"
+      - "infra/**"
+      - "scripts/bootstrap-terraform-state.sh"
+      - "scripts/commission-*.sh"
+      - "scripts/deploy-migrations.sh"
+      - ".github/workflows/infrastructure.yml"
 
 permissions:
   contents: read
@@ -22,12 +34,26 @@ jobs:
       - uses: azure/setup-helm@v4
         with: { version: v3.18.4 }
       - run: helm lint infra/helm/signal
-      - run: helm template signal infra/helm/signal --set global.existingSecret="" > /tmp/signal-manifests.yaml
+      - name: Keep deployed and tested OPA policy identical
+        run: cmp infra/opa/signal/authz.rego infra/helm/signal/policies/authz.rego
+      - name: Render production manifests
+        run: helm template signal infra/helm/signal --values infra/helm/values-production.yaml > /tmp/signal-manifests.yaml
+      - name: Validate Kubernetes manifests
+        run: docker run --rm --volume /tmp:/work:ro ghcr.io/yannh/kubeconform:v0.7.0 -strict -kubernetes-version 1.33.0 /work/signal-manifests.yaml
       - uses: hashicorp/setup-terraform@v3
         with: { terraform_version: 1.12.2 }
       - run: terraform -chdir=infra/terraform/aws fmt -check -recursive
       - run: terraform -chdir=infra/terraform/aws init -backend=false
       - run: terraform -chdir=infra/terraform/aws validate
+      - run: terraform -chdir=infra/terraform/bootstrap init -backend=false
+      - run: terraform -chdir=infra/terraform/bootstrap validate
+      - name: Validate commissioning scripts
+        run: >-
+          docker run --rm --entrypoint shellcheck --volume "$PWD:/work:ro" --workdir /work
+          koalaman/shellcheck-alpine:v0.10.0
+          scripts/bootstrap-terraform-state.sh scripts/commission-environment.sh
+          scripts/commission-runtime-secret.sh scripts/commission-eks-addons.sh
+          scripts/deploy-migrations.sh
       - uses: hadolint/hadolint-action@v3.1.0
         with:
           recursive: true

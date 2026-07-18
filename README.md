@@ -77,4 +77,4 @@ The local environment defaults to deterministic providers. These providers opera
 - `services/document-worker`: Python 3.12 multimodal processor.
 - `packages/*`: versioned contracts and protected shared libraries.
 
-Read [the implementation status](IMPLEMENTATION_STATUS.md) for verified commands, production qualifications, and external launch dependencies. The [acceptance scenario matrix](docs/acceptance-scenarios.md) maps every mandatory scenario to executable evidence.
+Read [the implementation status](IMPLEMENTATION_STATUS.md) for the production V1 closure matrix. The [production commissioning runbook](docs/runbooks/production-commissioning.md) covers operator-owned cloud/provider launch work, including exact [Google OAuth](docs/oauth/google.md), [GitHub](docs/oauth/github.md), and [mobile release](docs/runbooks/mobile-release.md) setup. The [acceptance scenario matrix](docs/acceptance-scenarios.md) maps every mandatory scenario to executable evidence.

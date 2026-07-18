@@ -1,7 +1,15 @@
 import * as DocumentPicker from "expo-document-picker";
+import {
+  RecordingPresets,
+  requestRecordingPermissionsAsync,
+  setAudioModeAsync,
+  useAudioRecorder,
+  useAudioRecorderState,
+} from "expo-audio";
+import { File } from "expo-file-system";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
-import { ArrowUp, Camera, FilePlus2, Mic, X } from "lucide-react-native";
+import { ArrowUp, Camera, FilePlus2, Images, Mic, ScanLine, Square, X } from "lucide-react-native";
 import { useState } from "react";
 import {
   ActivityIndicator,
@@ -27,6 +35,8 @@ export function Composer({
 }) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<LocalAttachment[]>([]);
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const recorderState = useAudioRecorderState(recorder);
 
   const pickDocument = async () => {
     const result = await DocumentPicker.getDocumentAsync({
@@ -63,6 +73,91 @@ export function Composer({
         size: asset.fileSize ?? 0,
       },
     ]);
+  };
+
+  const pickPhotos = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert(
+        "Photo permission required",
+        "Choose photos after enabling selected-photo access.",
+      );
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images", "videos"],
+      allowsMultipleSelection: true,
+      quality: 0.9,
+    });
+    if (result.canceled) return;
+    setAttachments((current) => [
+      ...current,
+      ...result.assets.map((asset) => ({
+        uri: asset.uri,
+        name: asset.fileName ?? `media-${Date.now()}`,
+        mimeType: asset.mimeType ?? (asset.type === "video" ? "video/mp4" : "image/jpeg"),
+        size: asset.fileSize ?? 0,
+      })),
+    ]);
+  };
+
+  const scanDocument = async () => {
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert("Camera permission required", "Enable camera access to scan a document.");
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ["images"],
+      allowsEditing: true,
+      quality: 1,
+    });
+    const asset = result.assets?.[0];
+    if (result.canceled || asset === undefined) return;
+    setAttachments((current) => [
+      ...current,
+      {
+        uri: asset.uri,
+        name: `scan-${new Date().toISOString().replaceAll(/[:.]/g, "-")}.jpg`,
+        mimeType: asset.mimeType ?? "image/jpeg",
+        size: asset.fileSize ?? 0,
+      },
+    ]);
+  };
+
+  const toggleVoice = async () => {
+    if (recorderState.isRecording) {
+      await recorder.stop();
+      const uri = recorder.uri;
+      if (uri !== null) {
+        const file = new File(uri);
+        setAttachments((current) => [
+          ...current,
+          {
+            uri,
+            name: `voice-${Date.now()}.m4a`,
+            mimeType: "audio/mp4",
+            size: file.size ?? 0,
+          },
+        ]);
+        if (text.trim().length === 0) {
+          setText("Transcribe this voice note and carry out the requested outcome.");
+        }
+      }
+      await setAudioModeAsync({ allowsRecording: false });
+      return;
+    }
+    const permission = await requestRecordingPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert(
+        "Microphone permission required",
+        "Enable microphone access to attach a voice note.",
+      );
+      return;
+    }
+    await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+    await recorder.prepareToRecordAsync();
+    recorder.record();
   };
 
   const submit = async () => {
@@ -178,13 +273,8 @@ export function Composer({
           </Pressable>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Voice input hook"
-            onPress={() =>
-              Alert.alert(
-                "Voice input",
-                "Use the keyboard microphone; native dictation is preserved.",
-              )
-            }
+            accessibilityLabel="Choose photos or video"
+            onPress={() => void pickPhotos()}
             style={({ pressed }) => ({
               width: 38,
               height: 38,
@@ -194,7 +284,47 @@ export function Composer({
               backgroundColor: pressed ? signalColors.canvas : "transparent",
             })}
           >
-            <Mic size={20} color={signalColors.inkMuted} />
+            <Images size={20} color={signalColors.inkMuted} />
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Scan document"
+            onPress={() => void scanDocument()}
+            style={({ pressed }) => ({
+              width: 38,
+              height: 38,
+              borderRadius: 19,
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: pressed ? signalColors.canvas : "transparent",
+            })}
+          >
+            <ScanLine size={20} color={signalColors.inkMuted} />
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={
+              recorderState.isRecording ? "Stop voice recording" : "Record voice input"
+            }
+            onPress={() => void toggleVoice()}
+            style={({ pressed }) => ({
+              width: 38,
+              height: 38,
+              borderRadius: 19,
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: recorderState.isRecording
+                ? signalColors.redSoft
+                : pressed
+                  ? signalColors.canvas
+                  : "transparent",
+            })}
+          >
+            {recorderState.isRecording ? (
+              <Square size={17} color={signalColors.red} fill={signalColors.red} />
+            ) : (
+              <Mic size={20} color={signalColors.inkMuted} />
+            )}
           </Pressable>
           <View style={{ flex: 1 }} />
           <Pressable

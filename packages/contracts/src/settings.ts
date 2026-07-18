@@ -21,6 +21,19 @@ export const settingsSchema = z
       z.enum(["DENY", "REQUIRE_APPROVAL", "ALLOW_WITH_LIMITS", "ALLOW"]),
     ),
     disabledCapabilityClasses: z.array(z.string()),
+    notifications: z
+      .object({
+        actionRequired: z.boolean(),
+        reminders: z.boolean(),
+        taskCompletion: z.boolean(),
+        taskFailure: z.boolean(),
+        securityEvents: z.boolean(),
+      })
+      .strict(),
+    sensitiveMemory: z.enum(["never", "confirm", "allow_explicit"]),
+    modelDataPolicy: z.enum(["minimum_required", "allow_provider_improvement"]),
+    processingRegion: z.enum(["automatic", "us", "eu"]),
+    developerMode: z.boolean(),
     retentionDays: z.int().min(1).max(3_650),
     updatedAt: utcTimestampSchema,
   })

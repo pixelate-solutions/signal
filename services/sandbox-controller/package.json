@@ -19,8 +19,11 @@
     "test": "vitest run --exclude 'dist/**'"
   },
   "dependencies": {
+    "@aws-sdk/client-kms": "^3.1090.0",
     "@signal/event-sdk": "workspace:*",
+    "@signal/persistence": "workspace:*",
     "fastify": "^5.10.0",
+    "ipaddr.js": "^2.4.0",
     "zod": "catalog:"
   }
 }

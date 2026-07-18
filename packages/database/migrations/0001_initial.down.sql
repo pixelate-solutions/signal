@@ -1,5 +1,3 @@
-begin;
-
 drop table if exists task_service_states cascade;
 drop table if exists outbox_events cascade;
 drop table if exists audit_events cascade;
@@ -43,5 +41,3 @@ drop table if exists memberships cascade;
 drop table if exists users cascade;
 drop table if exists tenants cascade;
 drop type if exists task_state;
-
-commit;

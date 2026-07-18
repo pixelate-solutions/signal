@@ -15,18 +15,52 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { Observable } from "rxjs";
 
 import type { Principal } from "@signal/auth-sdk";
-import { eventDeltaQuerySchema, taskInstructionSchema } from "@signal/contracts";
+import { eventDeltaQuerySchema, taskInstructionSchema, type TaskState } from "@signal/contracts";
 import type { SignalTaskService } from "@signal/task-service";
 
 import { RequestPrincipal, SignalAuthGuard } from "../auth.js";
-import { TASK_SERVICE } from "../tokens.js";
+import type { TaskRuntime } from "../task-runtime.js";
+import { TASK_RUNTIME, TASK_SERVICE } from "../tokens.js";
 
 @ApiTags("tasks")
 @ApiBearerAuth()
 @UseGuards(SignalAuthGuard)
 @Controller("v1/tasks")
 export class TasksController {
-  public constructor(@Inject(TASK_SERVICE) private readonly tasks: SignalTaskService) {}
+  public constructor(
+    @Inject(TASK_SERVICE) private readonly tasks: SignalTaskService,
+    @Inject(TASK_RUNTIME) private readonly runtime: TaskRuntime,
+  ) {}
+
+  @Get()
+  @ApiOperation({ summary: "Search tenant-scoped tasks" })
+  public async search(
+    @RequestPrincipal() principal: Principal,
+    @Query("query") query: string | undefined,
+    @Query("state") state: string | undefined,
+  ) {
+    const allowedStates = new Set([
+      "CREATED",
+      "QUEUED",
+      "PLANNING",
+      "RUNNING",
+      "WAITING_EXTERNAL",
+      "WAITING_USER",
+      "RETRY_SCHEDULED",
+      "PAUSED",
+      "COMPLETED",
+      "COMPLETED_WITH_WARNINGS",
+      "FAILED",
+      "CANCELLED",
+    ] as const);
+    const states = (state ?? "")
+      .split(",")
+      .filter((candidate): candidate is TaskState => allowedStates.has(candidate as TaskState));
+    return {
+      items: await this.tasks.searchTasks(principal, query ?? "", states),
+      nextCursor: null,
+    };
+  }
 
   @Get(":id")
   @ApiOperation({ summary: "Get an authoritative task snapshot" })
@@ -75,30 +109,36 @@ export class TasksController {
   }
 
   @Post(":id/pause")
-  public pause(
+  public async pause(
     @RequestPrincipal() principal: Principal,
     @Param("id") id: string,
     @Headers("idempotency-key") key: string | undefined,
   ) {
-    return this.tasks.control(principal, id, "pause", key ?? "");
+    const task = await this.tasks.control(principal, id, "pause", key ?? "");
+    await this.runtime.control(task, "pause");
+    return task;
   }
 
   @Post(":id/resume")
-  public resume(
+  public async resume(
     @RequestPrincipal() principal: Principal,
     @Param("id") id: string,
     @Headers("idempotency-key") key: string | undefined,
   ) {
-    return this.tasks.control(principal, id, "resume", key ?? "");
+    const task = await this.tasks.control(principal, id, "resume", key ?? "");
+    await this.runtime.control(task, "resume");
+    return task;
   }
 
   @Post(":id/cancel")
-  public cancel(
+  public async cancel(
     @RequestPrincipal() principal: Principal,
     @Param("id") id: string,
     @Headers("idempotency-key") key: string | undefined,
   ) {
-    return this.tasks.control(principal, id, "cancel", key ?? "");
+    const task = await this.tasks.control(principal, id, "cancel", key ?? "");
+    await this.runtime.control(task, "cancel");
+    return task;
   }
 
   @Post(":id/instructions")
@@ -118,6 +158,8 @@ export class TasksController {
       secretFields: [],
       evidenceIds: [],
     });
-    return this.tasks.getTask(principal, id);
+    const task = await this.tasks.getTask(principal, id);
+    await this.runtime.instruct(task, input.instruction);
+    return task;
   }
 }

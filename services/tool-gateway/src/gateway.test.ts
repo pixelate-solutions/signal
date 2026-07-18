@@ -105,6 +105,7 @@ describe("tool gateway", () => {
           usage: { durationMs: 1, costMinor: 0, currency: "USD" },
         };
       },
+      verify: async (_input, result) => result,
     });
     const gateway = new ToolGateway(registry, policy);
     const result = await gateway.execute(execution());
@@ -131,6 +132,7 @@ describe("tool gateway", () => {
           usage: { durationMs: 1, costMinor: 0, currency: "USD" },
         };
       },
+      verify: async (_input, result) => result,
     });
     const gateway = new ToolGateway(registry, policy);
     const approvalProbe = await policy.evaluate(policyRequest());
@@ -138,6 +140,37 @@ describe("tool gateway", () => {
     await gateway.execute(approved);
     await gateway.execute(approved);
     expect(calls).toBe(1);
+  });
+
+  it("refuses to claim completion when mandatory verification is not installed", async () => {
+    const registry = new ToolRegistry();
+    registry.register({
+      manifest,
+      execute: async () => ({
+        status: "SUCCEEDED",
+        data: { value: "Friday" },
+        sanitizedMessage: "State updated.",
+        provider: { statusCode: 200 },
+        retryable: false,
+        errorClass: "none",
+        sideEffectState: "definitely_completed",
+        evidenceIds: ["evd_demo0001"],
+        usage: { durationMs: 1, costMinor: 0, currency: "USD" },
+      }),
+    });
+    const gateway = new ToolGateway(registry, policy);
+    const approvalProbe = await policy.evaluate(policyRequest());
+    const result = await gateway.execute({
+      ...execution(),
+      context: { ...execution().context, idempotencyKey: "missing-verifier-0001" },
+      approvedMaterialDigest: approvalProbe.materialDigest,
+    });
+    expect(result).toMatchObject({
+      status: "FAILED",
+      errorClass: "unknown",
+      sideEffectState: "definitely_completed",
+    });
+    expect(result.sanitizedMessage).toContain("no verifier is installed");
   });
 
   it("Scenario G: never repeats a write whose side-effect state is unknown", async () => {

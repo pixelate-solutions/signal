@@ -51,6 +51,7 @@ export const taskEventTypeSchema = z.enum([
   "task.cancelled",
   "security.emergency_stopped",
   "security.prompt_injection_blocked",
+  "security.secret_rejected",
 ]);
 
 export const eventActorSchema = z

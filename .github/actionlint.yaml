@@ -1,0 +1,4 @@
+self-hosted-runner:
+  labels:
+    - signal-deploy-staging
+    - signal-deploy-production

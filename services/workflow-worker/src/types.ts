@@ -1,4 +1,4 @@
-import type { TaskState } from "@signal/contracts";
+import type { ActionRequest, TaskState } from "@signal/contracts";
 
 export type TaskWorkflowInput = {
   taskId: string;
@@ -16,10 +16,28 @@ export type TaskWorkflowCheckpoint = {
   lastObservation: string | null;
   cancelRequested: boolean;
   emergencyStopped: boolean;
+  approvedMaterialDigests: Record<string, string>;
+  secureInputHandles: Record<string, string>;
+  stepOverrides: Record<string, Record<string, unknown>>;
+};
+
+export type TaskActivityRef = { taskId: string; tenantId: string };
+
+export type StepApproval = {
+  materialDigest?: string;
+  secureInputHandle?: string;
+  inputOverride?: Record<string, unknown>;
 };
 
 export type Plan = {
-  steps: { id: string; description: string; sideEffecting: boolean }[];
+  steps: {
+    id: string;
+    description: string;
+    desiredCapability: string;
+    input: Record<string, unknown>;
+    connectionProvider: string | null;
+    sideEffecting: boolean;
+  }[];
   successCriteria: { id: string; description: string; required: boolean }[];
 };
 
@@ -28,11 +46,13 @@ export type StepOutcome =
   | {
       kind: "action_required";
       stepId: string;
-      actionType: string;
+      actionType: ActionRequest["type"];
       title: string;
       description: string;
       materialPayload: Record<string, unknown>;
       risk: "R0" | "R1" | "R2" | "R3" | "R4";
+      approvalThreshold?: number;
+      approverUserIds?: string[];
       expiresInSeconds: number;
     }
   | { kind: "external_wait"; stepId: string; observation: string; wakeAfterSeconds: number }
@@ -47,19 +67,24 @@ export type VerificationOutcome = {
 };
 
 export type WorkflowActivities = {
-  initializeTask(taskId: string): Promise<void>;
-  transitionTask(taskId: string, state: TaskState): Promise<void>;
-  retrieveAndPlan(taskId: string): Promise<Plan>;
-  executeStep(taskId: string, step: Plan["steps"][number], iteration: number): Promise<StepOutcome>;
+  initializeTask(task: TaskActivityRef): Promise<void>;
+  transitionTask(task: TaskActivityRef, state: TaskState): Promise<void>;
+  retrieveAndPlan(task: TaskActivityRef): Promise<Plan>;
+  executeStep(
+    task: TaskActivityRef,
+    step: Plan["steps"][number],
+    iteration: number,
+    approval?: StepApproval,
+  ): Promise<StepOutcome>;
   createActionRequest(
-    taskId: string,
+    task: TaskActivityRef,
     outcome: Extract<StepOutcome, { kind: "action_required" }>,
   ): Promise<string>;
-  recordInstruction(taskId: string, instruction: string): Promise<void>;
-  recordExternalEvent(taskId: string, event: Record<string, unknown>): Promise<void>;
-  verifyOutcome(taskId: string, plan: Plan): Promise<VerificationOutcome>;
-  completeTask(taskId: string, verification: VerificationOutcome): Promise<void>;
-  failTask(taskId: string, reason: string): Promise<void>;
-  persistCheckpoint(taskId: string, checkpoint: TaskWorkflowCheckpoint): Promise<void>;
-  revokeTaskLeases(taskId: string, reason: string): Promise<void>;
+  recordInstruction(task: TaskActivityRef, instruction: string): Promise<void>;
+  recordExternalEvent(task: TaskActivityRef, event: Record<string, unknown>): Promise<void>;
+  verifyOutcome(task: TaskActivityRef, plan: Plan): Promise<VerificationOutcome>;
+  completeTask(task: TaskActivityRef, verification: VerificationOutcome): Promise<void>;
+  failTask(task: TaskActivityRef, reason: string): Promise<void>;
+  persistCheckpoint(task: TaskActivityRef, checkpoint: TaskWorkflowCheckpoint): Promise<void>;
+  revokeTaskLeases(task: TaskActivityRef, reason: string): Promise<void>;
 };

@@ -9,10 +9,13 @@ import { NestFactory } from "@nestjs/core";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 
+import { assertHardenedRuntimeMode } from "@signal/config";
+
 import { AppModule } from "./app.module.js";
 import { SignalExceptionFilter } from "./errors.js";
 
 export async function createApp(): Promise<NestFastifyApplication> {
+  assertHardenedRuntimeMode();
   const adapter = new FastifyAdapter({
     logger: {
       level: process.env["NODE_ENV"] === "test" ? "silent" : "info",

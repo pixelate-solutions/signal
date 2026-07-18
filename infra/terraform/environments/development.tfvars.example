@@ -1,0 +1,17 @@
+aws_region  = "us-east-2"
+dr_region   = "us-west-2"
+environment = "development"
+eks_version = "1.33"
+vpc_cidr    = "10.40.0.0/16"
+
+database_instance_class         = "db.t4g.medium"
+database_allocated_storage_gib  = 50
+redis_node_type                 = "cache.t4g.medium"
+cluster_public_access_cidrs     = []
+github_repository              = "pixelate-solutions/signal"
+platform_admin_role_arns        = ["arn:aws:iam::123456789012:role/signal-platform-admin"]
+
+tags = {
+  Owner      = "platform"
+  CostCenter = "signal"
+}
