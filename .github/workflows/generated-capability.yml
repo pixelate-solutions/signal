@@ -54,7 +54,7 @@ jobs:
     environment: ${{ inputs.environment }}
     timeout-minutes: 15
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { name: generated-capability-candidate, path: candidate }
       - name: Require external canary executor
         env:
