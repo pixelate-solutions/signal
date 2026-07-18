@@ -20,7 +20,7 @@ RUN pnpm --filter "${SIGNAL_PACKAGE}..." build \
   && mkdir -p /static \
   && cp -R "$SIGNAL_OUTPUT"/. /static/
 
-FROM nginx:1.29.0-alpine
+FROM nginx:1.31.3-alpine
 COPY infra/nginx/spa.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /static /usr/share/nginx/html
 EXPOSE 8080
