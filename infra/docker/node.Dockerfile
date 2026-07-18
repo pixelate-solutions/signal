@@ -19,7 +19,10 @@ RUN --mount=type=cache,id=signal-pnpm-store,target=/pnpm/store,sharing=locked \
 
 FROM node:24-bookworm-slim AS runtime
 ENV NODE_ENV=production
-RUN groupadd --gid 10001 signal \
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+  && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+    /usr/local/bin/pnpm /usr/local/bin/pnpx /usr/local/bin/yarn /usr/local/bin/yarnpkg \
+  && groupadd --gid 10001 signal \
   && useradd --uid 10001 --gid signal --create-home signal
 WORKDIR /app
 COPY --from=build --chown=signal:signal /runtime/ ./

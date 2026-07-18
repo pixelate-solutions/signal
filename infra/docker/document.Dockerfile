@@ -2,9 +2,11 @@ FROM python:3.12.11-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
-# Track the security-patched FFmpeg revision supplied by this pinned Debian base.
-# hadolint ignore=DL3008
+# This image pins Python for reproducibility, so refresh the base OS security
+# packages before adding FFmpeg. DL3005 and DL3008 are deliberate here.
+# hadolint ignore=DL3005,DL3008
 RUN apt-get update \
+  && apt-get upgrade --yes \
   && apt-get install --no-install-recommends --yes ffmpeg \
   && rm -rf /var/lib/apt/lists/* \
   && groupadd --gid 10001 signal \
