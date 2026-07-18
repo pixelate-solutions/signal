@@ -1,0 +1,33 @@
+global:
+  existingSecret: signal-development-runtime
+workloads:
+  api:
+    {
+      replicas: 1,
+      autoscaling:
+        { enabled: false, minReplicas: 1, maxReplicas: 1, targetCPUUtilizationPercentage: 70 },
+    }
+  workflow:
+    {
+      replicas: 1,
+      autoscaling:
+        { enabled: false, minReplicas: 1, maxReplicas: 1, targetCPUUtilizationPercentage: 70 },
+    }
+  browser:
+    {
+      replicas: 1,
+      autoscaling:
+        { enabled: false, minReplicas: 1, maxReplicas: 1, targetCPUUtilizationPercentage: 70 },
+    }
+  sandbox:
+    {
+      replicas: 1,
+      autoscaling:
+        { enabled: false, minReplicas: 1, maxReplicas: 1, targetCPUUtilizationPercentage: 70 },
+    }
+  document:
+    {
+      replicas: 1,
+      autoscaling:
+        { enabled: false, minReplicas: 1, maxReplicas: 1, targetCPUUtilizationPercentage: 70 },
+    }

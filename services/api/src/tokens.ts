@@ -1,0 +1,9 @@
+export const TASK_SERVICE = Symbol("TASK_SERVICE");
+export const DEMO_RUNTIME = Symbol("DEMO_RUNTIME");
+export const ARTIFACT_SERVICE = Symbol("ARTIFACT_SERVICE");
+export const MEMORY_SERVICE = Symbol("MEMORY_SERVICE");
+export const CONNECTION_MANAGER = Symbol("CONNECTION_MANAGER");
+export const SETTINGS_MANAGER = Symbol("SETTINGS_MANAGER");
+export const DEVICE_REGISTRY = Symbol("DEVICE_REGISTRY");
+export const NOTIFICATION_SERVICE = Symbol("NOTIFICATION_SERVICE");
+export const DEVELOPMENT_PUSH_SINK = Symbol("DEVELOPMENT_PUSH_SINK");

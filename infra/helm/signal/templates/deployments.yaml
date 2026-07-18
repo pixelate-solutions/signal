@@ -1,0 +1,102 @@
+{{- range $name, $workload := .Values.workloads }}
+{{- if $workload.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "signal.fullname" $ }}-{{ $name }}
+  labels:
+    {{- include "signal.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+    signal.pixelate.dev/identity: {{ $workload.identity }}
+spec:
+  replicas: {{ $workload.replicas }}
+  revisionHistoryLimit: 3
+  minReadySeconds: 10
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "signal.name" $ }}
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+      app.kubernetes.io/component: {{ $name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "signal.name" $ }}
+        app.kubernetes.io/instance: {{ $.Release.Name }}
+        app.kubernetes.io/part-of: signal
+        app.kubernetes.io/component: {{ $name }}
+        signal.pixelate.dev/identity: {{ $workload.identity }}
+    spec:
+      serviceAccountName: {{ include "signal.serviceAccount" (list $ $workload.identity) }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        {{- toYaml $.Values.global.podSecurityContext | nindent 8 }}
+      {{- with $.Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "signal.name" $ }}
+              app.kubernetes.io/instance: {{ $.Release.Name }}
+              app.kubernetes.io/component: {{ $name }}
+      containers:
+        - name: {{ $name }}
+          image: {{ $workload.image | quote }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
+          command:
+            {{- toYaml $workload.command | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "signal.fullname" $ }}-runtime
+            {{- if $.Values.global.existingSecret }}
+            - secretRef:
+                name: {{ $.Values.global.existingSecret }}
+            {{- end }}
+          env:
+            - name: PORT
+              value: {{ $workload.port | quote }}
+          ports:
+            - name: http
+              containerPort: {{ $workload.port }}
+              protocol: TCP
+          startupProbe:
+            httpGet: { path: {{ $workload.healthPath }}, port: http }
+            failureThreshold: 30
+            periodSeconds: 5
+          readinessProbe:
+            httpGet: { path: {{ $workload.healthPath }}, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: {{ $workload.healthPath }}, port: http }
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml $workload.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: {{ default "512Mi" $workload.tempSizeLimit }}
+{{- end }}
+{{- end }}

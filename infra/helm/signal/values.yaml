@@ -1,0 +1,147 @@
+nameOverride: ""
+fullnameOverride: ""
+
+global:
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+  existingSecret: signal-runtime
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+
+config:
+  NODE_ENV: production
+  PORT: "3000"
+  TEMPORAL_ADDRESS: signal-temporal-frontend:7233
+  TEMPORAL_NAMESPACE: signal
+  TEMPORAL_TASK_QUEUE_TASKS: signal-tasks
+  TEMPORAL_TASK_QUEUE_BROWSER: signal-browser
+  TEMPORAL_TASK_QUEUE_SANDBOX: signal-sandbox
+  TEMPORAL_TASK_QUEUE_DOCUMENTS: signal-documents
+  OPA_URL: http://signal-opa:8181
+  PUSH_PROVIDER: firebase
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+
+serviceAccounts:
+  core:
+    create: true
+    name: ""
+    annotations: {}
+  generated:
+    create: true
+    name: ""
+    annotations: {}
+
+workloads:
+  api:
+    enabled: true
+    identity: core
+    replicas: 3
+    image: ghcr.io/pixelate-solutions/signal-api:0.1.0
+    command: ["node", "dist/main.js"]
+    port: 3000
+    healthPath: /health
+    service: true
+    servicePort: 80
+    resources:
+      requests: { cpu: 250m, memory: 384Mi }
+      limits: { cpu: "2", memory: 1Gi }
+    autoscaling:
+      { enabled: true, minReplicas: 3, maxReplicas: 20, targetCPUUtilizationPercentage: 65 }
+  workflow:
+    enabled: true
+    identity: core
+    replicas: 3
+    image: ghcr.io/pixelate-solutions/signal-workflow-worker:0.1.0
+    command: ["node", "dist/local.js"]
+    port: 3500
+    healthPath: /health
+    service: false
+    resources:
+      requests: { cpu: 500m, memory: 512Mi }
+      limits: { cpu: "2", memory: 2Gi }
+    autoscaling:
+      { enabled: true, minReplicas: 3, maxReplicas: 30, targetCPUUtilizationPercentage: 70 }
+  browser:
+    enabled: true
+    identity: core
+    replicas: 2
+    image: ghcr.io/pixelate-solutions/signal-browser-worker:0.1.0
+    command: ["node", "dist/host.js"]
+    port: 3200
+    healthPath: /health
+    service: true
+    servicePort: 3200
+    tempSizeLimit: 2Gi
+    resources:
+      requests: { cpu: "1", memory: 1Gi }
+      limits: { cpu: "4", memory: 4Gi }
+    autoscaling:
+      { enabled: true, minReplicas: 2, maxReplicas: 20, targetCPUUtilizationPercentage: 60 }
+  sandbox:
+    enabled: true
+    identity: core
+    replicas: 2
+    image: ghcr.io/pixelate-solutions/signal-sandbox-controller:0.1.0
+    command: ["node", "dist/host.js"]
+    port: 3300
+    healthPath: /health
+    service: true
+    servicePort: 3300
+    resources:
+      requests: { cpu: 250m, memory: 256Mi }
+      limits: { cpu: "1", memory: 1Gi }
+    autoscaling:
+      { enabled: true, minReplicas: 2, maxReplicas: 10, targetCPUUtilizationPercentage: 65 }
+  document:
+    enabled: true
+    identity: core
+    replicas: 2
+    image: ghcr.io/pixelate-solutions/signal-document-worker:0.1.0
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "3400", "--no-access-log"]
+    port: 3400
+    healthPath: /health
+    service: true
+    servicePort: 3400
+    tempSizeLimit: 2Gi
+    resources:
+      requests: { cpu: 500m, memory: 1Gi }
+      limits: { cpu: "4", memory: 4Gi }
+    autoscaling:
+      { enabled: true, minReplicas: 2, maxReplicas: 20, targetCPUUtilizationPercentage: 65 }
+  generated-runner:
+    enabled: false
+    identity: generated
+    replicas: 1
+    image: ghcr.io/pixelate-solutions/signal-generated-runner:0.1.0
+    command: ["node", "dist/runner.js"]
+    port: 3600
+    healthPath: /health
+    service: false
+    resources:
+      requests: { cpu: 250m, memory: 256Mi }
+      limits: { cpu: "1", memory: 512Mi }
+    autoscaling:
+      { enabled: false, minReplicas: 1, maxReplicas: 1, targetCPUUtilizationPercentage: 70 }
+
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: signal.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+networkPolicy:
+  enabled: true
+  ingressNamespaceLabels:
+    kubernetes.io/metadata.name: ingress-nginx
+  egressProxyPodLabels:
+    app.kubernetes.io/name: signal-egress-proxy

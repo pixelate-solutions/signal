@@ -1,0 +1,12 @@
+aws_region      = "us-east-2"
+environment     = "staging"
+eks_version     = "1.33"
+vpc_cidr        = "10.42.0.0/16"
+
+# Set only to tightly controlled administrative networks when public EKS API access is necessary.
+cluster_public_access_cidrs = []
+
+tags = {
+  Owner      = "platform"
+  CostCenter = "signal"
+}

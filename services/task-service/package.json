@@ -1,0 +1,26 @@
+{
+  "name": "@signal/task-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest run --exclude 'dist/**'"
+  },
+  "dependencies": {
+    "@signal/auth-sdk": "workspace:*",
+    "@signal/contracts": "workspace:*",
+    "@signal/event-sdk": "workspace:*",
+    "postgres": "^3.4.9"
+  }
+}

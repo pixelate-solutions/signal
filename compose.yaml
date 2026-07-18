@@ -1,0 +1,435 @@
+name: signal
+
+x-node-build: &node-build
+  context: .
+  dockerfile: infra/docker/node.Dockerfile
+
+x-service-environment: &service-environment
+  NODE_ENV: development
+  DEMO_MODE: "true"
+  DATABASE_URL: postgresql://signal:signal-local-only@postgres:5432/signal
+  REDIS_URL: redis://redis:6379
+  S3_ENDPOINT: http://minio:9000
+  S3_REGION: us-east-1
+  S3_BUCKET: signal-local
+  S3_ACCESS_KEY_ID: signal-local
+  S3_SECRET_ACCESS_KEY: signal-local-only
+  TEMPORAL_ADDRESS: temporal:7233
+  TEMPORAL_NAMESPACE: default
+  TEMPORAL_TASK_QUEUE_TASKS: signal-tasks
+  TEMPORAL_TASK_QUEUE_BROWSER: signal-browser
+  TEMPORAL_TASK_QUEUE_SANDBOX: signal-sandbox
+  TEMPORAL_TASK_QUEUE_DOCUMENTS: signal-documents
+  OIDC_ISSUER: http://keycloak:8080/realms/signal
+  OIDC_CLIENT_ID: signal-api
+  OIDC_AUDIENCE: signal-api
+  OPA_URL: http://opa:8181
+  META_MODEL_API_BASE_URL: http://local-fixtures:3100/v1
+  META_MODEL_API_KEY: signal-local-fixture
+  META_MODEL_ID: meta/muse-spark-1.1
+  META_MODEL_API_VERSION: public-preview-2026-07
+  PUSH_PROVIDER: development
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  CLAMAV_HOST: clamav
+  INTERNAL_SERVICE_TOKEN: signal-local-internal-only
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17-trixie
+    environment:
+      POSTGRES_DB: signal
+      POSTGRES_USER: signal
+      POSTGRES_PASSWORD: signal-local-only
+    ports: ["5432:5432"]
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U signal -d signal"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [core]
+
+  redis:
+    image: redis:7.4.5-alpine
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    ports: ["6379:6379"]
+    volumes: ["redis-data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [core]
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: signal-local
+      MINIO_ROOT_PASSWORD: signal-local-only
+    ports: ["9000:9000", "9001:9001"]
+    volumes: ["minio-data:/data"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [core]
+
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2025-07-21T05-28-08Z
+    depends_on:
+      minio: { condition: service_healthy }
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        mc alias set local http://minio:9000 signal-local signal-local-only
+        mc mb --ignore-existing local/signal-local
+        mc version enable local/signal-local
+    networks: [core]
+
+  temporal:
+    image: temporalio/auto-setup:1.28.1
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: signal
+      POSTGRES_PWD: signal-local-only
+      POSTGRES_SEEDS: postgres
+      DBNAME: temporal
+      VISIBILITY_DBNAME: temporal_visibility
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+    ports: ["7233:7233"]
+    volumes:
+      - ./infra/temporal/dynamicconfig:/etc/temporal/config/dynamicconfig:ro
+    healthcheck:
+      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "temporal:7233"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks: [core]
+
+  temporal-ui:
+    image: temporalio/ui:2.42.1
+    depends_on:
+      temporal: { condition: service_healthy }
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:8233
+    ports: ["8233:8080"]
+    networks: [core, edge]
+
+  opa:
+    image: openpolicyagent/opa:1.7.1-static
+    command: ["run", "--server", "--addr=0.0.0.0:8181", "--log-format=json", "/policies"]
+    ports: ["8181:8181"]
+    volumes:
+      - ./infra/opa/signal:/policies/signal:ro
+    healthcheck:
+      test: ["CMD", "/opa", "eval", "1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [core]
+
+  clamav:
+    image: clamav/clamav-debian:1.5.1
+    command: ["clamd", "--foreground"]
+    restart: unless-stopped
+    environment:
+      # Local signatures are pinned in the image/volume. Production updates them in a
+      # dedicated job so a reload never needs a second full signature set in memory.
+      CLAMD_CONF_ConcurrentDatabaseReload: "no"
+      CLAMD_CONF_SelfCheck: "3600"
+    ports: ["3310:3310"]
+    volumes: ["clamav-data:/var/lib/clamav"]
+    healthcheck:
+      test: ["CMD-SHELL", "printf 'PING\\n' | nc 127.0.0.1 3310 | grep PONG"]
+      interval: 20s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+    networks: [core]
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.3.2
+    command: ["start-dev", "--import-realm", "--health-enabled=true"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: local-admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: signal-local-only
+    ports: ["8080:8080", "9002:9000"]
+    volumes:
+      - ./infra/keycloak/signal-realm.json:/opt/keycloak/data/import/signal-realm.json:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "exec 3<>/dev/tcp/127.0.0.1/9000; printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -q '200 OK' <&3",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks: [core, edge]
+
+  local-fixtures:
+    build:
+      <<: *node-build
+      args: { SIGNAL_PACKAGE: "@signal/local-fixtures" }
+    command: ["node", "dist/index.js"]
+    environment: { NODE_ENV: development, PORT: "3100" }
+    ports: ["3100:3100"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3100/health').then(r=>{if(!r.ok)process.exit(1)})",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [core, untrusted]
+
+  db-migrate:
+    build:
+      <<: *node-build
+      args: { SIGNAL_PACKAGE: "@signal/database" }
+    command: ["node", "dist/migrate.js"]
+    environment:
+      DATABASE_URL: postgresql://signal:signal-local-only@postgres:5432/signal
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [core]
+
+  db-seed:
+    build:
+      <<: *node-build
+      args: { SIGNAL_PACKAGE: "@signal/database" }
+    command: ["node", "dist/seed.js"]
+    environment:
+      DATABASE_URL: postgresql://signal:signal-local-only@postgres:5432/signal
+    depends_on:
+      db-migrate: { condition: service_completed_successfully }
+    networks: [core]
+
+  api:
+    build:
+      <<: *node-build
+      args: { SIGNAL_PACKAGE: "@signal/api" }
+    command: ["node", "dist/main.js"]
+    environment:
+      <<: *service-environment
+      PORT: "3000"
+      APP_PUBLIC_URL: http://localhost:3000
+    ports: ["3000:3000"]
+    depends_on:
+      db-seed: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      minio-init: { condition: service_completed_successfully }
+      temporal: { condition: service_healthy }
+      opa: { condition: service_healthy }
+      local-fixtures: { condition: service_healthy }
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000/health').then(r=>{if(!r.ok)process.exit(1)})",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    stop_grace_period: 30s
+    networks: [core, edge]
+
+  workflow-worker:
+    build:
+      <<: *node-build
+      args: { SIGNAL_PACKAGE: "@signal/workflow-worker" }
+    command: ["node", "dist/local.js"]
+    environment: *service-environment
+    depends_on:
+      temporal: { condition: service_healthy }
+      api: { condition: service_healthy }
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3500/health').then(r=>{if(!r.ok)process.exit(1)})",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+    stop_grace_period: 30s
+    networks: [core]
+
+  browser-worker:
+    build:
+      context: .
+      dockerfile: infra/docker/browser.Dockerfile
+    environment:
+      <<: *service-environment
+      PORT: "3200"
+    ports: ["3200:3200"]
+    depends_on:
+      local-fixtures: { condition: service_healthy }
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3200/health').then(r=>{if(!r.ok)process.exit(1)})",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+    shm_size: 1gb
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=512m", "/home/signal:rw,noexec,nosuid,size=128m"]
+    pids_limit: 256
+    networks: [core, untrusted]
+
+  sandbox-controller:
+    build:
+      <<: *node-build
+      args: { SIGNAL_PACKAGE: "@signal/sandbox-controller" }
+    command: ["node", "dist/host.js"]
+    environment:
+      <<: *service-environment
+      PORT: "3300"
+    ports: ["3300:3300"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3300/health').then(r=>{if(!r.ok)process.exit(1)})",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+    networks: [core]
+
+  document-worker:
+    build:
+      context: .
+      dockerfile: infra/docker/document.Dockerfile
+    ports: ["3400:3400"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:3400/health', timeout=2)",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    read_only: true
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=512m"]
+    pids_limit: 128
+    mem_limit: 1g
+    networks: [core]
+
+  ops-console:
+    build:
+      context: .
+      dockerfile: infra/docker/web.Dockerfile
+      args:
+        SIGNAL_PACKAGE: "@signal/ops-console"
+        SIGNAL_OUTPUT: apps/ops-console/dist
+    ports: ["4173:8080"]
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+    depends_on:
+      api: { condition: service_healthy }
+    networks: [edge]
+
+  mobile-web:
+    build:
+      context: .
+      dockerfile: infra/docker/web.Dockerfile
+      args:
+        SIGNAL_PACKAGE: "@signal/mobile"
+        SIGNAL_OUTPUT: apps/mobile/dist
+        EXPO_PUBLIC_API_URL: http://localhost:3000
+    ports: ["8082:8080"]
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+    depends_on:
+      api: { condition: service_healthy }
+    networks: [edge]
+
+  mailpit:
+    image: axllent/mailpit:v1.27.8
+    ports: ["1025:1025", "8025:8025"]
+    networks: [core, edge]
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.131.1
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./infra/otel/collector.yaml:/etc/otelcol/config.yaml:ro
+    ports: ["4317:4317", "4318:4318", "8889:8889"]
+    networks: [core]
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=7d"]
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports: ["9090:9090"]
+    depends_on: [otel-collector]
+    networks: [core, edge]
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    environment:
+      GF_SECURITY_ADMIN_USER: local-admin
+      GF_SECURITY_ADMIN_PASSWORD: signal-local-only
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3001:3000"]
+    depends_on: [prometheus]
+    networks: [core, edge]
+
+networks:
+  edge: {}
+  core: {}
+  untrusted: {}
+
+volumes:
+  postgres-data: {}
+  redis-data: {}
+  minio-data: {}
+  clamav-data: {}
+  prometheus-data: {}
+  grafana-data: {}

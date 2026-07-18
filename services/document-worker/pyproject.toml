@@ -1,0 +1,48 @@
+[project]
+name = "signal-document-worker"
+version = "0.1.0"
+description = "Quarantined document, spreadsheet, presentation, PDF, image, archive, and media processing for Signal."
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.116,<1",
+  "uvicorn[standard]>=0.35,<1",
+  "pydantic>=2.11,<3",
+  "pypdf>=6,<7",
+  "python-docx>=1.2,<2",
+  "openpyxl>=3.1,<4",
+  "python-pptx>=1.0,<2",
+  "Pillow>=11,<13",
+  "reportlab>=4.4,<5"
+]
+
+[dependency-groups]
+dev = [
+  "mypy>=1.17,<2",
+  "pytest>=8.4,<10",
+  "ruff>=0.12,<1",
+  "httpx>=0.28,<1",
+  "types-Pillow>=10.2",
+  "types-openpyxl>=3.1",
+  "types-python-dateutil>=2.9",
+  "types-reportlab>=4.4"
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "SIM"]
+ignore = ["S101"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

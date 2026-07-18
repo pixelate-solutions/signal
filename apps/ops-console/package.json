@@ -1,0 +1,26 @@
+{
+  "name": "@signal/ops-console",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "dev": "vite --host 0.0.0.0",
+    "typecheck": "tsc --noEmit --pretty false",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@signal/ui": "workspace:*",
+    "@tanstack/react-query": "^5.101.2",
+    "lucide-react": "^1.25.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.3",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "vite": "^8.1.5"
+  }
+}

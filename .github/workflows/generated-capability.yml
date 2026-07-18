@@ -1,0 +1,66 @@
+name: Generated capability release
+
+on:
+  workflow_dispatch:
+    inputs:
+      package_path:
+        description: Path under integrations/generated
+        required: true
+        type: string
+      environment:
+        description: Canary environment
+        required: true
+        default: staging-generated-canary
+        type: environment
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+jobs:
+  gates:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.11.0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: Enforce generated-only scope
+        env:
+          GENERATED_PATH: ${{ inputs.package_path }}
+        run: node scripts/verify-generated-release.mjs
+      - run: pnpm --filter @signal/sandbox-controller test
+      - name: Run adapter package gates
+        working-directory: ${{ inputs.package_path }}
+        run: pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build
+      - name: Pack immutable candidate
+        working-directory: ${{ inputs.package_path }}
+        run: pnpm pack --pack-destination "$RUNNER_TEMP/candidate"
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ${{ runner.temp }}/candidate/*.tgz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: generated-capability-candidate
+          path: ${{ runner.temp }}/candidate/*.tgz
+
+  tenant-canary:
+    needs: gates
+    runs-on: ubuntu-24.04
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: generated-capability-candidate, path: candidate }
+      - name: Require external canary executor
+        env:
+          SIGNAL_GENERATED_CANARY_URL: ${{ secrets.SIGNAL_GENERATED_CANARY_URL }}
+          SIGNAL_GENERATED_CANARY_TOKEN: ${{ secrets.SIGNAL_GENERATED_CANARY_TOKEN }}
+        run: |
+          test -n "$SIGNAL_GENERATED_CANARY_URL"
+          test -n "$SIGNAL_GENERATED_CANARY_TOKEN"
+          curl --fail --retry 2 --header "authorization: Bearer $SIGNAL_GENERATED_CANARY_TOKEN" --form "candidate=@$(find candidate -name '*.tgz' -print -quit)" "$SIGNAL_GENERATED_CANARY_URL/v1/canary"

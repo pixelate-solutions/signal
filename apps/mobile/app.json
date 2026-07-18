@@ -1,0 +1,95 @@
+{
+  "expo": {
+    "name": "Signal",
+    "slug": "signal",
+    "scheme": "signal",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "backgroundColor": "#F3F6F2",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "solutions.pixelate.signal",
+      "associatedDomains": ["applinks:signal.pixelate.solutions"],
+      "infoPlist": {
+        "NSCameraUsageDescription": "Signal uses the camera only when you choose to attach or scan a document.",
+        "NSPhotoLibraryUsageDescription": "Signal accesses selected photos only when you attach them to a task."
+      }
+    },
+    "android": {
+      "package": "solutions.pixelate.signal",
+      "adaptiveIcon": {
+        "backgroundColor": "#071A20"
+      },
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "signal.pixelate.solutions",
+              "pathPrefix": "/app"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ],
+      "permissions": ["CAMERA", "READ_CONTACTS", "ACCESS_FINE_LOCATION"]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": [
+      "expo-secure-store",
+      "expo-document-picker",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Signal accesses only the photos you select for a task.",
+          "cameraPermission": "Signal uses the camera only when you choose to attach an image."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Signal uses the camera only when you choose to attach or scan a document."
+        }
+      ],
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "Signal accesses your calendars only for device actions you explicitly request.",
+          "remindersPermission": "Signal accesses reminders only for device actions you explicitly request."
+        }
+      ],
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "Signal accesses contacts only for device actions you explicitly request."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Signal accesses your location only while you perform a requested device action.",
+          "locationAlwaysAndWhenInUsePermission": false,
+          "locationAlwaysPermission": false,
+          "isAndroidBackgroundLocationEnabled": false,
+          "isAndroidForegroundServiceEnabled": false
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Signal uses Face ID to confirm sensitive approvals you choose to authorize."
+        }
+      ]
+    ],
+    "extra": {
+      "apiUrl": "http://localhost:3000"
+    }
+  }
+}

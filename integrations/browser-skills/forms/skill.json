@@ -1,0 +1,9 @@
+{
+  "name": "reviewed-form-submit",
+  "version": "1.0.0",
+  "domains": ["fixture.example"],
+  "mode": "approval",
+  "finalActionSelector": "#submit",
+  "requiresEvidence": ["screenshot", "accessibility_snapshot", "post_action_state"],
+  "reviewed": true
+}

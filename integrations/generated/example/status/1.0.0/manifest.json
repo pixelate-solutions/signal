@@ -1,0 +1,18 @@
+{
+  "name": "example.status.read",
+  "version": "1.0.0",
+  "source": "generated",
+  "description": "Reads a resource status from the official Example sandbox API fixture.",
+  "auth": ["oauth2"],
+  "requiredScopes": ["status:read"],
+  "riskClass": "R0",
+  "sideEffect": "none",
+  "idempotency": "none_required",
+  "egress": ["sandbox.example.com"],
+  "documentation": {
+    "url": "https://sandbox.example.com/openapi.json",
+    "sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "retrievedAt": "2026-07-18T00:00:00.000Z",
+    "trust": "official-provider-domain"
+  }
+}

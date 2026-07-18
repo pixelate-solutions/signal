@@ -1,0 +1,229 @@
+import * as DocumentPicker from "expo-document-picker";
+import * as Haptics from "expo-haptics";
+import * as ImagePicker from "expo-image-picker";
+import { ArrowUp, Camera, FilePlus2, Mic, X } from "lucide-react-native";
+import { useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
+
+import { signalColors, signalRadius, signalSpacing } from "@signal/ui";
+
+import type { LocalAttachment } from "../api/upload";
+
+export function Composer({
+  sending,
+  onSend,
+}: {
+  sending: boolean;
+  onSend(text: string, attachments: LocalAttachment[]): Promise<void>;
+}) {
+  const [text, setText] = useState("");
+  const [attachments, setAttachments] = useState<LocalAttachment[]>([]);
+
+  const pickDocument = async () => {
+    const result = await DocumentPicker.getDocumentAsync({
+      multiple: true,
+      copyToCacheDirectory: true,
+    });
+    if (result.canceled) return;
+    setAttachments((current) => [
+      ...current,
+      ...result.assets.map((asset) => ({
+        uri: asset.uri,
+        name: asset.name,
+        mimeType: asset.mimeType ?? "application/octet-stream",
+        size: asset.size ?? 0,
+      })),
+    ]);
+  };
+
+  const takePhoto = async () => {
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert("Camera permission required", "Enable camera access to capture an attachment.");
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync({ mediaTypes: ["images"], quality: 0.9 });
+    const asset = result.assets?.[0];
+    if (result.canceled || asset === undefined) return;
+    setAttachments((current) => [
+      ...current,
+      {
+        uri: asset.uri,
+        name: asset.fileName ?? `camera-${Date.now()}.jpg`,
+        mimeType: asset.mimeType ?? "image/jpeg",
+        size: asset.fileSize ?? 0,
+      },
+    ]);
+  };
+
+  const submit = async () => {
+    const objective = text.trim();
+    if (objective.length === 0 || sending) return;
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    await onSend(objective, attachments);
+    setText("");
+    setAttachments([]);
+  };
+
+  return (
+    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      {attachments.length > 0 && (
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+          {attachments.map((attachment, index) => (
+            <View
+              key={`${attachment.uri}-${index}`}
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: 5,
+                maxWidth: "100%",
+                backgroundColor: signalColors.tealSoft,
+                paddingVertical: 6,
+                paddingLeft: 9,
+                paddingRight: 5,
+                borderRadius: signalRadius.pill,
+              }}
+            >
+              <Text
+                numberOfLines={1}
+                style={{ color: signalColors.tealDark, fontSize: 12, maxWidth: 220 }}
+              >
+                {attachment.name}
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Remove ${attachment.name}`}
+                onPress={() =>
+                  setAttachments((current) => current.filter((_, item) => item !== index))
+                }
+                hitSlop={8}
+              >
+                <X size={14} color={signalColors.tealDark} />
+              </Pressable>
+            </View>
+          ))}
+        </View>
+      )}
+      <View
+        style={{
+          backgroundColor: signalColors.surface,
+          borderRadius: signalRadius.lg,
+          borderWidth: 1,
+          borderColor: signalColors.line,
+          padding: signalSpacing.sm,
+          shadowColor: signalColors.ink,
+          shadowOpacity: 0.08,
+          shadowRadius: 18,
+          shadowOffset: { width: 0, height: 7 },
+          elevation: 4,
+        }}
+      >
+        <TextInput
+          accessibilityLabel="Task objective"
+          multiline
+          maxLength={20_000}
+          placeholder="What outcome should Signal handle?"
+          placeholderTextColor="#82918C"
+          value={text}
+          onChangeText={setText}
+          style={{
+            minHeight: 52,
+            maxHeight: 130,
+            paddingHorizontal: signalSpacing.sm,
+            paddingTop: signalSpacing.sm,
+            color: signalColors.ink,
+            fontSize: 16,
+            lineHeight: 22,
+          }}
+        />
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Attach a file"
+            onPress={() => void pickDocument()}
+            style={({ pressed }) => ({
+              width: 38,
+              height: 38,
+              borderRadius: 19,
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: pressed ? signalColors.canvas : "transparent",
+            })}
+          >
+            <FilePlus2 size={20} color={signalColors.inkMuted} />
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Take a photo"
+            onPress={() => void takePhoto()}
+            style={({ pressed }) => ({
+              width: 38,
+              height: 38,
+              borderRadius: 19,
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: pressed ? signalColors.canvas : "transparent",
+            })}
+          >
+            <Camera size={20} color={signalColors.inkMuted} />
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Voice input hook"
+            onPress={() =>
+              Alert.alert(
+                "Voice input",
+                "Use the keyboard microphone; native dictation is preserved.",
+              )
+            }
+            style={({ pressed }) => ({
+              width: 38,
+              height: 38,
+              borderRadius: 19,
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: pressed ? signalColors.canvas : "transparent",
+            })}
+          >
+            <Mic size={20} color={signalColors.inkMuted} />
+          </Pressable>
+          <View style={{ flex: 1 }} />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Start task"
+            disabled={text.trim().length === 0 || sending}
+            onPress={() => void submit()}
+            style={({ pressed }) => ({
+              width: 42,
+              height: 42,
+              borderRadius: 21,
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor:
+                text.trim().length === 0
+                  ? signalColors.line
+                  : pressed
+                    ? signalColors.tealDark
+                    : signalColors.teal,
+            })}
+          >
+            {sending ? (
+              <ActivityIndicator color={signalColors.surface} size="small" />
+            ) : (
+              <ArrowUp size={20} color={signalColors.surface} strokeWidth={2.7} />
+            )}
+          </Pressable>
+        </View>
+      </View>
+    </KeyboardAvoidingView>
+  );
+}

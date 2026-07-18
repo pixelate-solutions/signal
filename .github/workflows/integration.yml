@@ -1,0 +1,50 @@
+name: Integration
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  infrastructure-contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      DATABASE_URL: postgresql://signal:signal-local-only@localhost:5432/signal
+      ALLOW_DESTRUCTIVE_MIGRATION: "true"
+      CLAMAV_HOST: localhost
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.11.0 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Start durable dependencies and contract fixtures
+        run: docker compose up --build --detach --wait postgres redis minio temporal opa clamav local-fixtures
+      - name: Exercise forward, seed, guarded rollback, and reapply
+        run: |
+          pnpm --filter @signal/database db:migrate
+          pnpm --filter @signal/database db:seed
+          pnpm --filter @signal/database db:rollback:ephemeral
+          pnpm --filter @signal/database db:migrate
+          pnpm --filter @signal/database db:seed
+      - name: OPA policy tests
+        run: docker compose exec -T opa /opa test /policies/signal
+      - name: Meta and idempotent provider fixture contracts
+        run: |
+          curl --fail http://localhost:3100/v1/models
+          curl --fail --header 'content-type: application/json' --data '{"stream":false}' http://localhost:3100/v1/responses
+          curl --fail --header 'content-type: application/json' --header 'idempotency-key: ci-write-1' --data '{"key":"ci","value":"verified"}' http://localhost:3100/provider/write
+          curl --fail http://localhost:3100/provider/state/ci
+      - run: pnpm test
+      - name: Dependency logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail=300 postgres temporal opa clamav local-fixtures
+      - if: always()
+        run: docker compose down --volumes

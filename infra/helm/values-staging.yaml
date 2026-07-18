@@ -1,0 +1,5 @@
+global:
+  existingSecret: signal-staging-runtime
+  imagePullPolicy: IfNotPresent
+config:
+  NODE_ENV: production

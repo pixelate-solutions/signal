@@ -1,0 +1,7 @@
+/packages/auth-sdk/ @pixelate-solutions/security
+/packages/policy-client/ @pixelate-solutions/security
+/services/connection-service/ @pixelate-solutions/security
+/services/sandbox-controller/ @pixelate-solutions/security
+/infra/ @pixelate-solutions/platform @pixelate-solutions/security
+/.github/ @pixelate-solutions/platform @pixelate-solutions/security
+/integrations/generated/ @pixelate-solutions/security

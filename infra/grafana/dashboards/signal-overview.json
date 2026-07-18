@@ -1,0 +1,22 @@
+{
+  "annotations": { "list": [] },
+  "editable": false,
+  "panels": [
+    {
+      "type": "text",
+      "title": "Signal local observability",
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "markdown",
+        "content": "Task latency, approval waits, provider errors, retry counts, and worker backlog are emitted through OTLP. The local deterministic stack starts empty by design."
+      }
+    }
+  ],
+  "schemaVersion": 41,
+  "tags": ["signal"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "title": "Signal overview",
+  "uid": "signal-overview",
+  "version": 1
+}

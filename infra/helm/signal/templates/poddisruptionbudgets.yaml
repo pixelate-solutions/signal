@@ -1,0 +1,19 @@
+{{- range $name, $workload := .Values.workloads }}
+{{- if and $workload.enabled (gt (int $workload.replicas) 1) }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "signal.fullname" $ }}-{{ $name }}
+  labels:
+    {{- include "signal.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "signal.name" $ }}
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+      app.kubernetes.io/component: {{ $name }}
+{{- end }}
+{{- end }}

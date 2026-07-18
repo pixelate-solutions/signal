@@ -1,0 +1,8 @@
+docs/FRD.md
+docs/CODEX_MASTER_PROMPT.md
+pnpm-lock.yaml
+coverage
+dist
+build
+.expo
+infra/helm/signal/templates

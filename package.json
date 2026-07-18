@@ -1,0 +1,50 @@
+{
+  "name": "@signal/root",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Signal — a persistent, policy-governed cloud operator.",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=24.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "packageManager": "pnpm@10.11.0",
+  "pnpm": {
+    "overrides": {
+      "xcode>uuid": "11.1.1"
+    }
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "clean": "turbo run clean",
+    "dev": "turbo run dev --parallel",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint . && node scripts/verify-boundaries.mjs",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:unit": "vitest run --passWithNoTests",
+    "test:coverage": "vitest run --coverage",
+    "test:source": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm security:scan",
+    "test:all": "node scripts/test-all.mjs",
+    "db:generate": "pnpm --filter @signal/database db:generate",
+    "db:migrate": "pnpm --filter @signal/database db:migrate",
+    "db:seed": "pnpm --filter @signal/database db:seed",
+    "demo": "pnpm --filter @signal/api dev",
+    "compose:up": "docker compose up --build",
+    "compose:down": "docker compose down",
+    "security:scan": "node scripts/secret-scan.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.0.0",
+    "@vitest/coverage-v8": "^4.1.10",
+    "eslint": "^10.7.0",
+    "prettier": "^3.9.5",
+    "turbo": "^2.10.5",
+    "tsx": "^4.20.5",
+    "typescript": "6.0.3",
+    "typescript-eslint": "^8.64.0",
+    "vitest": "^4.1.10"
+  }
+}

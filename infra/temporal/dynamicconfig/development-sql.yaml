@@ -1,0 +1,10 @@
+frontend.enableUpdateWorkflowExecution:
+  - value: true
+frontend.enableExecuteMultiOperation:
+  - value: true
+history.persistenceMaxQPS:
+  - value: 3000
+matching.numTaskqueueReadPartitions:
+  - value: 4
+matching.numTaskqueueWritePartitions:
+  - value: 4

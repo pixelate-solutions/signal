@@ -1,0 +1,27 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "signal.fullname" . }}-generated-jobs
+  labels:
+    {{- include "signal.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "signal.fullname" . }}-generated-jobs
+  labels:
+    {{- include "signal.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "signal.serviceAccount" (list . "generated") }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "signal.fullname" . }}-generated-jobs

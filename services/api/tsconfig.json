@@ -1,0 +1,23 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "tsBuildInfoFile": "dist/.tsbuildinfo",
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "strictPropertyInitialization": false
+  },
+  "references": [
+    { "path": "../../packages/auth-sdk" },
+    { "path": "../../packages/contracts" },
+    { "path": "../../packages/event-sdk" },
+    { "path": "../../packages/policy-client" },
+    { "path": "../../packages/test-fixtures" },
+    { "path": "../../packages/tool-sdk" },
+    { "path": "../task-service" },
+    { "path": "../tool-gateway" },
+    { "path": "../../integrations/native/signal-test-state" }
+  ],
+  "include": ["src/**/*.ts"]
+}

@@ -1,0 +1,34 @@
+name: Infrastructure
+
+on:
+  pull_request:
+    paths: ["compose.yaml", "infra/**", ".github/workflows/infrastructure.yml"]
+  push:
+    branches: [main]
+    paths: ["compose.yaml", "infra/**", ".github/workflows/infrastructure.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose config --quiet
+      - name: OPA syntax and policy tests
+        run: docker run --rm --volume "$PWD/infra/opa:/policies:ro" openpolicyagent/opa:1.7.1-static test /policies/signal
+      - uses: azure/setup-helm@v4
+        with: { version: v3.18.4 }
+      - run: helm lint infra/helm/signal
+      - run: helm template signal infra/helm/signal --set global.existingSecret="" > /tmp/signal-manifests.yaml
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: 1.12.2 }
+      - run: terraform -chdir=infra/terraform/aws fmt -check -recursive
+      - run: terraform -chdir=infra/terraform/aws init -backend=false
+      - run: terraform -chdir=infra/terraform/aws validate
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          recursive: true
+          dockerfile: infra/docker/node.Dockerfile

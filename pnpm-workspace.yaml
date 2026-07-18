@@ -1,0 +1,11 @@
+packages:
+  - apps/*
+  - services/*
+  - packages/*
+  - integrations/native/*
+  - integrations/generated/**
+  - integrations/browser-skills/*
+
+catalog:
+  "@opentelemetry/api": ^1.9.1
+  zod: ^4.4.3

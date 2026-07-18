@@ -1,0 +1,33 @@
+{
+  "name": "@signal/workflow-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./workflows": {
+      "types": "./dist/workflows.d.ts",
+      "import": "./dist/workflows.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "dev": "tsx watch src/worker.ts",
+    "start": "node dist/local.js",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest run --exclude 'dist/**'"
+  },
+  "dependencies": {
+    "@signal/contracts": "workspace:*",
+    "@temporalio/activity": "^1.20.3",
+    "@temporalio/client": "^1.20.3",
+    "@temporalio/worker": "^1.20.3",
+    "@temporalio/workflow": "^1.20.3"
+  }
+}

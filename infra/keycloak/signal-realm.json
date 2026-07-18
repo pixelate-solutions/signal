@@ -1,0 +1,42 @@
+{
+  "realm": "signal",
+  "enabled": true,
+  "displayName": "Signal Local Identity",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": true,
+  "roles": {
+    "realm": [{ "name": "user" }, { "name": "operator" }, { "name": "tenant_admin" }]
+  },
+  "clients": [
+    {
+      "clientId": "signal-api",
+      "name": "Signal API",
+      "enabled": true,
+      "bearerOnly": true,
+      "protocol": "openid-connect"
+    },
+    {
+      "clientId": "signal-mobile",
+      "name": "Signal Mobile",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "protocol": "openid-connect",
+      "redirectUris": ["signal://oauth/callback", "http://localhost:8082/*"],
+      "webOrigins": ["http://localhost:8082"]
+    }
+  ],
+  "users": [
+    {
+      "username": "demo",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Signal",
+      "lastName": "Demo",
+      "email": "demo@signal.local",
+      "credentials": [{ "type": "password", "value": "signal-local-demo", "temporary": false }],
+      "realmRoles": ["user", "operator", "tenant_admin"]
+    }
+  ]
+}
