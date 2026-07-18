@@ -12,11 +12,36 @@ if (databaseUrl === undefined || !/(localhost|127\.0\.0\.1|postgres:5432)/.test(
 }
 
 const client = postgres(databaseUrl, { max: 1 });
-const rollbackUrl = new URL("../migrations/0001_initial.down.sql", import.meta.url);
-const rollback = await readFile(fileURLToPath(rollbackUrl), "utf8");
+const migrationsUrl = new URL("../migrations/", import.meta.url);
 try {
-  await client.unsafe(rollback);
-  console.log("Rolled back 0001_initial.sql on an authorized ephemeral database.");
+  const ledger = await client<{ present: boolean }[]>`
+    select to_regclass('public.signal_schema_migrations') is not null as present
+  `;
+  if (ledger[0]?.present !== true) {
+    console.log("No migration ledger exists; nothing to roll back.");
+  } else {
+    const applied = await client<{ name: string }[]>`
+      select name from signal_schema_migrations order by name desc
+    `;
+    const rollbacks = await Promise.all(
+      applied.map(async ({ name }) => {
+        const downName = name.replace(/\.sql$/, ".down.sql");
+        const downUrl = new URL(downName, migrationsUrl);
+        return {
+          downName,
+          name,
+          sql: await readFile(fileURLToPath(downUrl), "utf8"),
+        };
+      }),
+    );
+    for (const rollback of rollbacks) {
+      await client.begin(async (transaction) => {
+        await transaction.unsafe(rollback.sql);
+        await transaction`delete from signal_schema_migrations where name = ${rollback.name}`;
+      });
+      console.log(`Applied ${rollback.downName}`);
+    }
+  }
 } finally {
   await client.end();
 }
