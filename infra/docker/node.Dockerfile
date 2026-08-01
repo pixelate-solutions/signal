@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:24-bookworm-slim AS build
+FROM node:25-bookworm-slim AS build
 
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
@@ -17,7 +17,7 @@ RUN --mount=type=cache,id=signal-pnpm-store,target=/pnpm/store,sharing=locked \
   pnpm --filter "${SIGNAL_PACKAGE}..." build \
   && pnpm --filter "${SIGNAL_PACKAGE}" deploy --prod --legacy /runtime
 
-FROM node:24-bookworm-slim AS runtime
+FROM node:25-bookworm-slim AS runtime
 ENV NODE_ENV=production
 RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
   && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
