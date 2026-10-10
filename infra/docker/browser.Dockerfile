@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM mcr.microsoft.com/playwright:v1.61.1-noble AS build
+FROM mcr.microsoft.com/playwright:v1.64.0-noble AS build
 
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
@@ -15,7 +15,7 @@ RUN --mount=type=cache,id=signal-pnpm-store,target=/pnpm/store,sharing=locked \
   && pnpm --filter "@signal/browser-worker..." build \
   && pnpm --filter "@signal/browser-worker" deploy --prod --legacy /runtime
 
-FROM mcr.microsoft.com/playwright:v1.61.1-noble
+FROM mcr.microsoft.com/playwright:v1.64.0-noble
 ENV NODE_ENV=production
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN rm -rf /usr/lib/node_modules/npm /usr/lib/node_modules/corepack \
