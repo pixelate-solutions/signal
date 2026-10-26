@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import type { ToolManifest } from "@signal/contracts";
+import { InMemoryTenantRecordStore } from "@signal/persistence";
 import { DefaultPolicyEvaluator, type PolicyRequest } from "@signal/policy-client";
 import { ToolRegistry } from "@signal/tool-sdk";
 
-import { ToolGateway } from "./index.js";
+import {
+  authorizeRetryAfterUnknownSideEffect,
+  confirmUnknownSideEffectCompleted,
+  ToolGateway,
+} from "./index.js";
 
 let id = 0;
 const policy = new DefaultPolicyEvaluator({ next: () => `pol_demo000${++id}` });
@@ -204,6 +209,93 @@ describe("tool gateway", () => {
     expect(calls).toBe(1);
   });
 
+  it("releases an unknown write only after durable provider-state evidence", async () => {
+    const records = new InMemoryTenantRecordStore();
+    const idempotencyKey = "tsk_demo0001:step-demo0001";
+    await records.runExclusive("ten_demo0001", async (transaction) => {
+      await transaction.put("tool.idempotency", idempotencyKey, {
+        status: "FAILED",
+        data: null,
+        sanitizedMessage: "The provider state is unknown.",
+        provider: {},
+        retryable: false,
+        errorClass: "unknown",
+        sideEffectState: "unknown",
+        evidenceIds: [],
+        usage: { durationMs: 1, costMinor: 0, currency: "USD" },
+      });
+    });
+
+    await authorizeRetryAfterUnknownSideEffect(records, {
+      tenantId: "ten_demo0001",
+      taskId: "tsk_demo0001",
+      idempotencyKey,
+      investigatedBy: "signal-operator",
+      evidenceIds: ["evd_provider_read_0001"],
+      summary: "A provider read found no matching write.",
+      observedAt: "2026-07-19T07:55:00.000Z",
+    });
+
+    await records.runExclusive("ten_demo0001", async (transaction) => {
+      await expect(transaction.get("tool.idempotency", idempotencyKey)).resolves.toBeUndefined();
+      await expect(transaction.list("tool.side-effect-investigations")).resolves.toEqual([
+        expect.objectContaining({
+          resolution: "definitely_not_started",
+          evidenceIds: ["evd_provider_read_0001"],
+        }),
+      ]);
+    });
+  });
+
+  it("confirms an unknown write from separate provider evidence without repeating it", async () => {
+    const records = new InMemoryTenantRecordStore();
+    const idempotencyKey = "tsk_demo0001:step-demo0002";
+    const failed = {
+      status: "FAILED" as const,
+      data: { id: "provider-message-0001" },
+      sanitizedMessage: "The provider verification was inconclusive.",
+      provider: { requestId: "provider-request-0001" },
+      retryable: false,
+      errorClass: "unknown" as const,
+      sideEffectState: "unknown" as const,
+      evidenceIds: [],
+      usage: { durationMs: 1, costMinor: 0, currency: "USD" },
+    };
+    await records.runExclusive("ten_demo0001", async (transaction) => {
+      await transaction.put("tool.idempotency", idempotencyKey, failed);
+      await transaction.put("tool.executions", "tex_demo0002", {
+        executionId: "tex_demo0002",
+        taskId: "tsk_demo0001",
+        result: failed,
+      });
+    });
+
+    await expect(
+      confirmUnknownSideEffectCompleted(records, {
+        tenantId: "ten_demo0001",
+        taskId: "tsk_demo0001",
+        idempotencyKey,
+        executionId: "tex_demo0002",
+        investigatedBy: "signal-operator",
+        evidenceIds: ["evd_provider_read_0002"],
+        summary: "A separate provider read confirmed the exact write.",
+        observedAt: "2026-07-19T07:58:00.000Z",
+      }),
+    ).resolves.toMatchObject({
+      status: "SUCCEEDED",
+      sideEffectState: "definitely_completed",
+      data: { id: "provider-message-0001" },
+    });
+    await records.runExclusive("ten_demo0001", async (transaction) => {
+      await expect(transaction.get("tool.idempotency", idempotencyKey)).resolves.toMatchObject({
+        status: "SUCCEEDED",
+      });
+      await expect(transaction.get("tool.executions", "tex_demo0002")).resolves.toMatchObject({
+        result: { status: "SUCCEEDED" },
+      });
+    });
+  });
+
   it("rejects undeclared input before adapter execution", async () => {
     const registry = new ToolRegistry();
     registry.register({
@@ -222,5 +314,34 @@ describe("tool gateway", () => {
       errorClass: "validation",
       sideEffectState: "definitely_not_started",
     });
+  });
+
+  it("validates standard JSON Schema email formats", async () => {
+    const registry = new ToolRegistry();
+    registry.register({
+      manifest: {
+        ...manifest,
+        inputSchema: {
+          ...manifest.inputSchema,
+          properties: { value: { type: "string", format: "email" } },
+        },
+      },
+      execute: async () => {
+        throw new Error("approval must happen before execution");
+      },
+    });
+    const gateway = new ToolGateway(registry, policy);
+    await expect(
+      gateway.execute({
+        ...execution(),
+        input: { value: "admin@pixelate.solutions" },
+      }),
+    ).resolves.toMatchObject({ status: "APPROVAL_REQUIRED" });
+    await expect(
+      gateway.execute({
+        ...execution(),
+        input: { value: "not-an-email" },
+      }),
+    ).resolves.toMatchObject({ status: "FAILED", errorClass: "validation" });
   });
 });

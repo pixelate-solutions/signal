@@ -12,7 +12,7 @@ import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 
 import type { TaskEvent } from "@signal/contracts";
-import { renderEventCard, type EventCardTone } from "@signal/event-sdk";
+import { renderEventCard, type EventCardTone } from "@signal/event-sdk/renderer";
 import { formatShortTime, signalColors, signalRadius, signalSpacing } from "@signal/ui";
 
 const palette: Record<EventCardTone, { accent: string; tint: string }> = {

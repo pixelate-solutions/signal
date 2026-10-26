@@ -68,6 +68,7 @@ export class ComposioConnectionProvider {
   }
 
   public async execute(input: {
+    userId: string;
     connectedAccountId: string;
     toolSlug: string;
     toolVersion: string;
@@ -77,6 +78,7 @@ export class ComposioConnectionProvider {
     const result = await this.#client.tools.execute(
       input.toolSlug,
       {
+        userId: input.userId,
         connectedAccountId: input.connectedAccountId,
         version: input.toolVersion,
         arguments: { ...input.arguments },

@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { BlurView } from "expo-blur";
 import { randomUUID } from "expo-crypto";
 import { LinearGradient } from "expo-linear-gradient";
 import {
@@ -16,7 +17,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -29,7 +32,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { Conversation } from "@signal/contracts";
 import { signalColors, signalRadius, signalSpacing } from "@signal/ui";
 
-import { signalApi } from "../api/client";
+import { SignalApiError, signalApi } from "../api/client";
+import { startTaskWithConversationRecovery } from "../api/start-task";
 import { uploadAttachment, type LocalAttachment } from "../api/upload";
 import { ActionCard } from "../components/action-card";
 import { ArtifactCard } from "../components/artifact-card";
@@ -40,15 +44,32 @@ import { TaskHeader } from "../components/task-header";
 import { ReceiptCard } from "../components/receipt-card";
 import { useTaskReconnect } from "../hooks/use-task-reconnect";
 import { useSignalStore } from "../state/use-signal-store";
+import type { Page } from "../types";
+import { isNearThreadEnd, shouldFollowNewThreadEvents } from "./thread-scroll";
 
 function HistorySheet({ conversations }: { conversations: Conversation[] }) {
   const insets = useSafeAreaInsets();
+  const queryClient = useQueryClient();
   const open = useSignalStore((state) => state.historyOpen);
   const activeId = useSignalStore((state) => state.activeConversationId);
   const setOpen = useSignalStore((state) => state.setHistoryOpen);
   const setConversation = useSignalStore((state) => state.setActiveConversation);
   const setTask = useSignalStore((state) => state.setActiveTask);
   const [search, setSearch] = useState("");
+  const createConversation = useMutation({
+    mutationFn: () => signalApi.createConversation(),
+    onSuccess: async (created) => {
+      queryClient.setQueryData<Page<Conversation>>(["conversations"], (current) => ({
+        items: [created, ...(current?.items ?? []).filter((item) => item.id !== created.id)],
+        nextCursor: current?.nextCursor ?? null,
+      }));
+      setConversation(created.id);
+      setTask(null);
+      setOpen(false);
+      await queryClient.invalidateQueries({ queryKey: ["conversations"] });
+    },
+    onError: (error: Error) => Alert.alert("Chat not created", error.message),
+  });
   const matchingTasks = useQuery({
     queryKey: ["task-search", search],
     queryFn: () => signalApi.searchTasks(search),
@@ -66,12 +87,18 @@ function HistorySheet({ conversations }: { conversations: Conversation[] }) {
             matchingConversationIds.has(conversation.id),
         );
   return (
-    <Modal visible={open} animationType="slide" transparent onRequestClose={() => setOpen(false)}>
+    <Modal visible={open} animationType="none" transparent onRequestClose={() => setOpen(false)}>
       <Pressable
         accessibilityLabel="Close conversation history"
         onPress={() => setOpen(false)}
-        style={{ flex: 1, backgroundColor: "#071A2075", justifyContent: "flex-end" }}
+        style={{ flex: 1, justifyContent: "flex-end" }}
       >
+        <BlurView
+          intensity={28}
+          tint="light"
+          pointerEvents="none"
+          style={{ position: "absolute", inset: 0 }}
+        />
         <Pressable
           onPress={(event) => event.stopPropagation()}
           style={{
@@ -136,23 +163,26 @@ function HistorySheet({ conversations }: { conversations: Conversation[] }) {
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Start a new conversation"
-              onPress={() => {
-                setConversation(null);
-                setTask(null);
-                setOpen(false);
-              }}
-              style={{
+              accessibilityState={{ disabled: createConversation.isPending }}
+              disabled={createConversation.isPending}
+              onPress={() => createConversation.mutate()}
+              style={({ pressed }) => ({
                 flexDirection: "row",
                 alignItems: "center",
                 gap: signalSpacing.md,
                 backgroundColor: signalColors.ink,
                 borderRadius: signalRadius.md,
                 padding: signalSpacing.lg,
-              }}
+                opacity: pressed || createConversation.isPending ? 0.76 : 1,
+              })}
             >
-              <Plus color={signalColors.lime} size={20} />
+              {createConversation.isPending ? (
+                <ActivityIndicator color={signalColors.lime} size="small" />
+              ) : (
+                <Plus color={signalColors.lime} size={20} />
+              )}
               <Text style={{ color: signalColors.surface, fontWeight: "700", flex: 1 }}>
-                New objective
+                {createConversation.isPending ? "Creating chat…" : "New objective"}
               </Text>
               <ChevronRight color="#8FA6A0" size={18} />
             </Pressable>
@@ -281,6 +311,9 @@ export function ChatScreen() {
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
   const scroll = useRef<ScrollView>(null);
+  const previousEventCount = useRef(0);
+  const followsThreadEnd = useRef(true);
+  const [manualRefreshing, setManualRefreshing] = useState(false);
   const hydrated = useSignalStore((state) => state.hydrated);
   const activeConversationId = useSignalStore((state) => state.activeConversationId);
   const activeTaskId = useSignalStore((state) => state.activeTaskId);
@@ -300,10 +333,38 @@ export function ChatScreen() {
   const task = useTaskReconnect(activeTaskId);
 
   useEffect(() => {
-    if (hydrated && activeConversationId === null && (conversations.data?.items.length ?? 0) > 0) {
-      setConversation(conversations.data?.items[0]?.id ?? null);
+    if (!hydrated || conversations.data === undefined) return;
+    const items = conversations.data.items;
+    if (activeConversationId !== null && !items.some((item) => item.id === activeConversationId)) {
+      queryClient.removeQueries({ queryKey: ["conversation", activeConversationId] });
+      if (activeTaskId !== null) queryClient.removeQueries({ queryKey: ["task", activeTaskId] });
+      setConversation(null);
+      setTask(null);
+      return;
     }
-  }, [activeConversationId, conversations.data?.items, hydrated, setConversation]);
+    if (activeConversationId === null && items.length > 0) {
+      setConversation(items[0]?.id ?? null);
+    }
+  }, [
+    activeConversationId,
+    activeTaskId,
+    conversations.data,
+    hydrated,
+    queryClient,
+    setConversation,
+    setTask,
+  ]);
+
+  useEffect(() => {
+    if (conversation.error instanceof SignalApiError && conversation.error.status === 404) {
+      setConversation(null);
+      setTask(null);
+    }
+  }, [conversation.error, setConversation, setTask]);
+
+  useEffect(() => {
+    if (task.error instanceof SignalApiError && task.error.status === 404) setTask(null);
+  }, [setTask, task.error]);
 
   useEffect(() => {
     if (activeTaskId !== null || conversation.data === undefined) return;
@@ -328,31 +389,54 @@ export function ChatScreen() {
   );
 
   useEffect(() => {
-    if (pendingActions.length > 0) {
-      const timer = setTimeout(() => scroll.current?.scrollTo({ y: 0, animated: true }), 120);
-      return () => clearTimeout(timer);
+    previousEventCount.current = 0;
+    followsThreadEnd.current = true;
+    const frame = requestAnimationFrame(() => scroll.current?.scrollToEnd({ animated: false }));
+    return () => cancelAnimationFrame(frame);
+  }, [activeTaskId]);
+
+  useEffect(() => {
+    const previous = previousEventCount.current;
+    previousEventCount.current = visibleEvents.length;
+    if (
+      !shouldFollowNewThreadEvents({
+        previousEventCount: previous,
+        nextEventCount: visibleEvents.length,
+        wasNearEnd: followsThreadEnd.current,
+      })
+    ) {
+      return undefined;
     }
-    if (visibleEvents.length > 0) {
-      const timer = setTimeout(() => scroll.current?.scrollToEnd({ animated: true }), 120);
-      return () => clearTimeout(timer);
-    }
-    return undefined;
-  }, [pendingActions.length, visibleEvents.length]);
+    const frame = requestAnimationFrame(() => scroll.current?.scrollToEnd({ animated: false }));
+    return () => cancelAnimationFrame(frame);
+  }, [visibleEvents.length]);
 
   const send = useMutation({
     mutationFn: async ({ text, attachments }: { text: string; attachments: LocalAttachment[] }) => {
-      const activeConversation =
-        activeConversationId === null
-          ? await signalApi.createConversation(text.slice(0, 72))
-          : { id: activeConversationId };
       const uploaded = await Promise.all(attachments.map(uploadAttachment));
-      const result = await signalApi.sendMessage(
-        activeConversation.id,
-        text,
-        uploaded.map((artifact) => artifact.id),
-        randomUUID(),
+      const result = await startTaskWithConversationRecovery(
+        {
+          objective: text,
+          artifactIds: uploaded.map((artifact) => artifact.id),
+          activeConversationId,
+          knownConversationIds: conversations.data?.items.map((item) => item.id),
+        },
+        {
+          createConversation: signalApi.createConversation,
+          sendMessage: signalApi.sendMessage,
+          nextIdempotencyKey: randomUUID,
+          isConversationNotFound: (error) =>
+            error instanceof SignalApiError && error.status === 404,
+        },
       );
-      return { conversationId: activeConversation.id, taskId: result.task.id };
+      if (result.createdConversation !== null) {
+        const created = result.createdConversation;
+        queryClient.setQueryData<Page<Conversation>>(["conversations"], (current) => ({
+          items: [created, ...(current?.items ?? []).filter((item) => item.id !== created.id)],
+          nextCursor: current?.nextCursor ?? null,
+        }));
+      }
+      return result;
     },
     onSuccess: async ({ conversationId, taskId }) => {
       setConversation(conversationId);
@@ -367,11 +451,20 @@ export function ChatScreen() {
   });
 
   const refresh = async () => {
-    await Promise.all([conversations.refetch(), conversation.refetch(), task.refetch()]);
+    if (manualRefreshing) return;
+    setManualRefreshing(true);
+    try {
+      await Promise.all([conversations.refetch(), conversation.refetch(), task.refetch()]);
+    } finally {
+      setManualRefreshing(false);
+    }
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: signalColors.canvas }}>
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: signalColors.canvas }}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    >
       <View
         style={{
           paddingTop: insets.top + 8,
@@ -423,10 +516,23 @@ export function ChatScreen() {
         ref={scroll}
         style={{ flex: 1 }}
         contentContainerStyle={{ padding: signalSpacing.lg, paddingBottom: signalSpacing.xxl }}
+        keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
         keyboardShouldPersistTaps="handled"
+        maintainVisibleContentPosition={
+          Platform.OS === "web" ? undefined : { minIndexForVisible: 0 }
+        }
+        onScroll={(event) => {
+          const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+          followsThreadEnd.current = isNearThreadEnd({
+            contentOffsetY: contentOffset.y,
+            contentHeight: contentSize.height,
+            viewportHeight: layoutMeasurement.height,
+          });
+        }}
+        scrollEventThrottle={16}
         refreshControl={
           <RefreshControl
-            refreshing={task.isRefetching}
+            refreshing={manualRefreshing}
             onRefresh={() => void refresh()}
             tintColor={signalColors.teal}
           />
@@ -539,6 +645,6 @@ export function ChatScreen() {
         />
       </View>
       <HistorySheet conversations={conversations.data?.items ?? []} />
-    </View>
+    </KeyboardAvoidingView>
   );
 }

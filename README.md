@@ -59,6 +59,16 @@ pnpm security:scan
 
 The local environment defaults to deterministic providers. These providers operate only on a test state store, emit evidence, and never masquerade as external provider success. Missing production credentials return `CONNECTION_REQUIRED`.
 
+To exercise real providers, configure the model and provider variables in `.env`, then start the
+explicit live-provider overlay:
+
+```bash
+pnpm compose:live --detach --wait
+```
+
+Live mode disables the deterministic tool registry. External writes still pause for connection and
+policy approval, and completion requires provider read-back evidence.
+
 ## Repository map
 
 - `apps/mobile`: Expo prebuild React Native app with exactly Chat and Settings tabs.

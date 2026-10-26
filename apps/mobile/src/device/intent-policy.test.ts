@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { reviewedAndroidIntent, reviewedAppIntentUrl } from "./intent-policy";
+import {
+  reviewedAndroidIntent,
+  reviewedAppIntentUrl,
+  reviewedInstalledAppProbes,
+} from "./intent-policy";
 
 describe("reviewed device intent policy", () => {
   it("allows declared app integrations and rejects arbitrary custom schemes", () => {
@@ -45,5 +49,22 @@ describe("reviewed device intent policy", () => {
         managedEnterprise: true,
       }),
     ).toEqual({ action: "android.settings.WIFI_SETTINGS" });
+  });
+
+  it("limits installed-app checks to reviewed platform identifiers", () => {
+    expect(
+      reviewedInstalledAppProbes("ios", [
+        "com.apple.mobilenotes",
+        "com.apple.mobilenotes",
+        "com.example.private-bank",
+      ]),
+    ).toEqual([
+      {
+        identifier: "com.apple.mobilenotes",
+        label: "Apple Notes",
+        url: "mobilenotes://",
+      },
+    ]);
+    expect(reviewedInstalledAppProbes("web", ["com.apple.mobilenotes"])).toEqual([]);
   });
 });

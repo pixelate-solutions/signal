@@ -39,7 +39,7 @@ export const signalConfigSchema = z
     OIDC_MOBILE_REDIRECT_URI: z.string().min(1),
     META_MODEL_API_BASE_URL: z.url().default("https://api.meta.ai/v1"),
     META_MODEL_API_KEY: optionalSecret,
-    META_MODEL_ID: z.string().default("meta/muse-spark-1.1"),
+    META_MODEL_ID: z.string().default("muse-spark-1.1"),
     META_MODEL_API_VERSION: z.string().default("public-preview-2026-07"),
     COMPOSIO_API_KEY: optionalSecret,
     COMPOSIO_CALLBACK_URL: z.url(),

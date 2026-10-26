@@ -68,12 +68,19 @@ export type CreateActionInput = {
   title: string;
   description: string;
   materialPayload: Record<string, unknown>;
+  materialDigest?: string;
   risk: TaskRisk;
   options?: ActionRequest["options"];
   approverUserIds?: string[];
   approvalThreshold?: number;
   requiresRecentAuth?: boolean;
   expiresAt: Date;
+};
+
+export type InternalTaskRecoveryInput = {
+  expectedUpdatedAt: string;
+  expectedLastSequence: number;
+  reason: string;
 };
 
 export class SignalTaskService {
@@ -335,6 +342,56 @@ export class SignalTaskService {
     });
   }
 
+  public async recoverFromInternalFailure(
+    principal: Principal,
+    taskId: string,
+    input: InternalTaskRecoveryInput,
+  ): Promise<Task> {
+    if (!principal.roles.some((role) => ["owner", "administrator"].includes(role))) {
+      throw new TaskConflictError(
+        "Only an owner or administrator may recover an internal failure.",
+      );
+    }
+    const reason = input.reason.trim();
+    if (reason.length < 1 || reason.length > 1_000) {
+      throw new TaskConflictError("A recovery reason between 1 and 1000 characters is required.");
+    }
+    return this.store.runExclusive(principal.tenantId, (data) => {
+      const task = this.requireTask(data, taskId);
+      requireTenant(principal, task.tenantId);
+      if (task.state !== "FAILED") {
+        throw new TaskConflictError("Only a failed task may be recovered.");
+      }
+      if (
+        task.updatedAt !== input.expectedUpdatedAt ||
+        task.lastSequence !== input.expectedLastSequence
+      ) {
+        throw new TaskConflictError("The task changed after recovery was authorized.");
+      }
+      const recentEvents = data.events.get(taskId) ?? [];
+      if (recentEvents.at(-1)?.type !== "task.failed") {
+        throw new TaskConflictError("The task does not have a recoverable terminal event.");
+      }
+      data.tasks.set(taskId, {
+        ...task,
+        state: "RUNNING",
+        snapshotVersion: task.snapshotVersion + 1,
+        completedAt: null,
+      });
+      this.appendEvent(data, {
+        taskId,
+        type: "task.state_changed",
+        actor: { type: "user", id: principal.userId },
+        visibility: "user",
+        summary: "Signal recovered the task after an internal failure.",
+        details: { from: "FAILED", to: "RUNNING", reason, recovery: true },
+        secretFields: [],
+        evidenceIds: [],
+      });
+      return this.requireTask(data, taskId);
+    });
+  }
+
   public async recordEvent(
     principal: Principal,
     draft: Omit<TaskEventDraft, "taskId"> & { taskId: string },
@@ -354,6 +411,12 @@ export class SignalTaskService {
     return this.store.runExclusive(principal.tenantId, async (data) => {
       const task = this.requireTask(data, taskId);
       requireTenant(principal, task.tenantId);
+      if (
+        input.materialDigest !== undefined &&
+        !/^sha256:[a-f0-9]{64}$/.test(input.materialDigest)
+      ) {
+        throw new TaskConflictError("The approval material digest is invalid.");
+      }
       if (input.expiresAt <= this.clock.now()) {
         throw new TaskConflictError("An action request must expire in the future.");
       }
@@ -386,7 +449,7 @@ export class SignalTaskService {
         title: input.title,
         description: input.description,
         materialPayload: input.materialPayload,
-        materialDigest: sha256(input.materialPayload),
+        materialDigest: input.materialDigest ?? sha256(input.materialPayload),
         risk: input.risk,
         options: input.options ?? [
           {

@@ -219,7 +219,7 @@ const metaModel = new MetaMuseSparkProvider({
   ...(process.env["META_MODEL_API_KEY"] === undefined
     ? {}
     : { apiKey: process.env["META_MODEL_API_KEY"] }),
-  model: process.env["META_MODEL_ID"] ?? "meta/muse-spark-1.1",
+  model: process.env["META_MODEL_ID"] ?? "muse-spark-1.1",
   apiVersion: process.env["META_MODEL_API_VERSION"] ?? "public-preview-2026-07",
 });
 const model = new ObservedModelProvider(metaModel, async (observation) => {
@@ -299,6 +299,8 @@ const implementation = new ProductionWorkflowActivities({
   connections,
   model,
   records,
+  nativeGoogleTools: googleClientId !== undefined && googleSecretHandle !== undefined,
+  nativeGitHubTools: githubClientId !== undefined && githubSecretHandle !== undefined,
   notifications,
   artifacts,
 });

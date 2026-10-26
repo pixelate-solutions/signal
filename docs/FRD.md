@@ -10,7 +10,7 @@ lang: en-US
 **Product category:** Intent-to-outcome, persistent cloud agent<br>
 **Document version:** 1.0<br>
 **Status:** Build-ready baseline<br>
-**Primary backend model:** Meta Muse Spark 1.1 (`meta/muse-spark-1.1`)<br>
+**Primary backend model:** Meta Muse Spark 1.1 (`muse-spark-1.1`)<br>
 **Primary mobile surfaces:** Chat and Settings
 
 > **Product promise:** Tell it what needs to become true. It continues working in the cloud, uses connected tools, the web, code, files, and approved device capabilities, asks only for necessary human authority, and returns a verified outcome.
@@ -499,7 +499,7 @@ Launch format families:
 
 Meta Muse Spark 1.1 is the required default backend model. Meta’s current developer material identifies it on the Meta Model API and describes million-token context and multimodal, agentic use. The implementation must use the official current model identifier and API semantics rather than copying an outdated sample. [R1][R2]
 
-The internal model contract must remain provider-neutral. This is not an invitation to silently switch models; it is a reliability and migration boundary. The configured default is `meta/muse-spark-1.1`. Any fallback must be explicitly configured, logged, and disclosed in task metadata.
+The internal model contract must remain provider-neutral. This is not an invitation to silently switch models; it is a reliability and migration boundary. The configured default is `muse-spark-1.1`. Any fallback must be explicitly configured, logged, and disclosed in task metadata.
 
 | ID | Priority | Release | Requirement | Acceptance / verification |
 | --- | --- | --- | --- | --- |
@@ -737,7 +737,7 @@ Apple’s Background Tasks framework allows limited background work rather than 
 | API/control plane | NestJS with Fastify adapter, OpenAPI, OIDC middleware, REST plus SSE/WebSocket for live events. |
 | Durable workflows | Temporal TypeScript SDK and Temporal Cloud or self-hosted production cluster. |
 | Agent runtime | TypeScript worker service with model gateway, context compiler, planner, verifier, tool router client, and evaluation hooks. |
-| Primary model | Meta Model API, default model `meta/muse-spark-1.1`, behind `ModelProvider` interface. |
+| Primary model | Meta Model API, default model `muse-spark-1.1`, behind `ModelProvider` interface. |
 | Tool gateway | TypeScript service with JSON Schema/Zod validation, OPA policy calls, idempotency, rate limits, circuit breakers, and normalized results. |
 | Composio | Current TypeScript SDK sessions/connected accounts; hosted Connect Link or operator-owned OAuth apps. |
 | Browser | Playwright Chromium/Firefox/WebKit workers in isolated containers; WebRTC or secure streaming for takeover. |

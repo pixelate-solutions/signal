@@ -174,6 +174,27 @@ export class ConnectionManager {
     replacementConnectionId: string | null = null,
   ) {
     const input = connectionLinkSchema.parse(rawInput);
+    if (replacementConnectionId === null) {
+      const existing = await this.#records.runExclusive(principal.tenantId, async (transaction) =>
+        (await transaction.list<Connection>(CONNECTION_NAMESPACE)).find(
+          (connection) =>
+            connection.ownerUserId === principal.userId &&
+            connection.provider === input.provider &&
+            connection.toolkit === input.toolkit &&
+            connection.status === "ACTIVE" &&
+            input.requestedScopes.every((scope) => connection.scopes.includes(scope)),
+        ),
+      );
+      if (existing !== undefined) {
+        return {
+          state: this.#oauth.issueState(principal.tenantId),
+          redirectUrl: input.returnDeepLink,
+          expiresAt: new Date(Date.now() + 10 * 60 * 1_000).toISOString(),
+          alreadyConnected: true,
+          connectionId: existing.id,
+        };
+      }
+    }
     const authConfigId =
       input.authConfigId ??
       this.options.composioAuthConfigs?.[input.provider] ??
@@ -531,7 +552,14 @@ export class ConnectionManager {
       input.taskId,
       input.adapter,
     );
+    const connection = await this.#records.runExclusive(input.tenantId, (transaction) =>
+      transaction.get<Connection>(CONNECTION_NAMESPACE, input.connectionId),
+    );
+    if (connection === undefined || connection.externalAccountId !== connectedAccountId) {
+      throw new Error("CONNECTION_REQUIRED: Composio authorization changed during execution.");
+    }
     return this.#composio.execute({
+      userId: connection.ownerUserId,
       connectedAccountId,
       toolSlug: input.toolSlug,
       toolVersion: input.toolVersion,

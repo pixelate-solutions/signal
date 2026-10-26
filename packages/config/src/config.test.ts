@@ -33,7 +33,7 @@ const required = {
 
 describe("typed configuration", () => {
   it("uses the required model by default", () => {
-    expect(signalConfigSchema.parse(required).META_MODEL_ID).toBe("meta/muse-spark-1.1");
+    expect(signalConfigSchema.parse(required).META_MODEL_ID).toBe("muse-spark-1.1");
   });
 
   it("rejects an invalid deep-link scheme", () => {

@@ -1,4 +1,5 @@
 import * as SecureStore from "expo-secure-store";
+import { Platform } from "react-native";
 
 import { signalApi } from "../api/client";
 import { executeDeviceCommand } from "./executor";
@@ -7,6 +8,7 @@ import { ensureDeviceRegistered, registeredDevice } from "./registration";
 let running: Promise<void> | undefined;
 
 export function runPendingDeviceCommands(): Promise<void> {
+  if (Platform.OS === "web") return Promise.resolve();
   if (running !== undefined) return running;
   running = (async () => {
     let identity = await registeredDevice();

@@ -18,7 +18,7 @@ describe("local external-system fixtures", () => {
       output_text: string;
       output: { content: { text: string }[] }[];
     };
-    expect(body.model).toBe("meta/muse-spark-1.1");
+    expect(body.model).toBe("muse-spark-1.1");
     expect(body.output_text).toContain('"desiredCapability":"signal_test_state.read"');
     expect(body.output[0]?.content[0]?.text).toBe(body.output_text);
   });

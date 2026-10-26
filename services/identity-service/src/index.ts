@@ -83,6 +83,14 @@ export type AcceptedOrganizationInvitation = OrganizationMembership & {
   requiresTokenRefresh: boolean;
 };
 
+function asDate(value: Date | string): Date {
+  return value instanceof Date ? value : new Date(value);
+}
+
+function isoTimestamp(value: Date | string): string {
+  return asDate(value).toISOString();
+}
+
 export class HttpIdentityOperationsProvider
   implements InvitationDeliveryProvider, OrganizationMembershipProvisioner
 {
@@ -572,8 +580,8 @@ export class IdentityService {
           locale: string;
           timezone: string;
           status: string;
-          created_at: Date;
-          updated_at: Date;
+          created_at: Date | string;
+          updated_at: Date | string;
         }[]
       >`
         select id, tenant_id, identity_provider_id, display_name, email, avatar_url,
@@ -592,8 +600,8 @@ export class IdentityService {
         locale: user.locale,
         timezone: user.timezone,
         status: user.status,
-        createdAt: user.created_at.toISOString(),
-        updatedAt: user.updated_at.toISOString(),
+        createdAt: isoTimestamp(user.created_at),
+        updatedAt: isoTimestamp(user.updated_at),
       };
     });
   }
@@ -634,10 +642,10 @@ export class IdentityService {
             {
               id: string;
               device_id: string | null;
-              authenticated_at: Date;
-              expires_at: Date;
-              last_seen_at: Date;
-              revoked_at: Date | null;
+              authenticated_at: Date | string;
+              expires_at: Date | string;
+              last_seen_at: Date | string;
+              revoked_at: Date | string | null;
             }[]
           >`
             select id, device_id, authenticated_at, expires_at, last_seen_at, revoked_at
@@ -646,10 +654,10 @@ export class IdentityService {
           return rows.map((session) => ({
             id: session.id,
             deviceId: session.device_id,
-            authenticatedAt: session.authenticated_at.toISOString(),
-            expiresAt: session.expires_at.toISOString(),
-            lastSeenAt: session.last_seen_at.toISOString(),
-            revokedAt: session.revoked_at?.toISOString() ?? null,
+            authenticatedAt: isoTimestamp(session.authenticated_at),
+            expiresAt: isoTimestamp(session.expires_at),
+            lastSeenAt: isoTimestamp(session.last_seen_at),
+            revokedAt: session.revoked_at === null ? null : isoTimestamp(session.revoked_at),
             current: session.id === principal.sessionId,
           }));
         }),
@@ -930,13 +938,17 @@ export class IdentityService {
 
   public async readExport(principal: Principal, exportId: string): Promise<Uint8Array> {
     return withTenant(this.#client, principal.tenantId, async (transaction) => {
-      const rows = await transaction<{ object_key: string; status: string; expires_at: Date }[]>`
+      const rows = await transaction<
+        { object_key: string; status: string; expires_at: Date | string }[]
+      >`
         select object_key, status, expires_at from data_exports
         where id = ${exportId} and user_id = ${principal.userId}
       `;
       const record = rows[0];
       if (record === undefined || record.status !== "ready") throw new Error("Export not found.");
-      if (record.expires_at.getTime() <= Date.now()) throw new Error("Export has expired.");
+      if (asDate(record.expires_at).getTime() <= Date.now()) {
+        throw new Error("Export has expired.");
+      }
       const object = await this.objects.get(record.object_key);
       if (object === undefined) throw new Error("Export object not found.");
       return object.body;
@@ -1085,7 +1097,7 @@ export class IdentityService {
     requireRole(principal, ["owner", "administrator", "auditor"]);
     return withTenant(this.#client, principal.tenantId, async (transaction) => {
       const rows = await transaction<
-        { id: string; display_name: string; legal_hold: boolean; updated_at: Date }[]
+        { id: string; display_name: string; legal_hold: boolean; updated_at: Date | string }[]
       >`
         select id, display_name, legal_hold, updated_at from users
         where tenant_id = ${principal.tenantId}
@@ -1095,7 +1107,7 @@ export class IdentityService {
         userId: row.id,
         displayName: row.display_name,
         enabled: row.legal_hold,
-        updatedAt: row.updated_at.toISOString(),
+        updatedAt: isoTimestamp(row.updated_at),
       }));
     });
   }
@@ -1462,7 +1474,7 @@ export class IdentityService {
           email: string;
           role: "administrator" | "member" | "auditor";
           status: "pending" | "accepted" | "expired" | "revoked";
-          expires_at: Date;
+          expires_at: Date | string;
           tenant_name: string;
           tenant_status: string;
         }[]
@@ -1474,7 +1486,7 @@ export class IdentityService {
         limit 1
       `;
       const found = rows[0];
-      if (found?.status === "pending" && found.expires_at.getTime() <= Date.now()) {
+      if (found?.status === "pending" && asDate(found.expires_at).getTime() <= Date.now()) {
         await transaction`
           update organization_invitations set status = 'expired' where id = ${found.id}
         `;

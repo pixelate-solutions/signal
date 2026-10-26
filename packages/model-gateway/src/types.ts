@@ -17,6 +17,8 @@ export type ModelTool = {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  connectionProvider?: string | null;
+  sideEffecting?: boolean;
 };
 
 export type ModelRequest = {

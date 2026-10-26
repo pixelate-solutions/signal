@@ -32,7 +32,6 @@ export function registerDeviceTool(
       inputSchema: {
         type: "object",
         properties: {
-          commandId: { type: "string", minLength: 8 },
           deviceId: { type: "string", minLength: 8 },
           actionType: {
             enum: [
@@ -72,55 +71,61 @@ export function registerDeviceTool(
       enabled: true,
     },
     execute: async (input, context, cancellation) => {
-      let stored: StoredCommandResponse;
-      if (typeof input["commandId"] === "string") {
-        const response = await fetcher(
-          `${options.baseUrl.replace(/\/$/, "")}/internal/v1/device-commands/${encodeURIComponent(input["commandId"])}?tenantId=${encodeURIComponent(context.tenantId)}`,
-          { headers, signal: cancellation.signal },
-        );
-        if (!response.ok)
-          throw new Error(`Device command lookup returned HTTP ${response.status}.`);
-        stored = (await response.json()) as StoredCommandResponse;
-      } else {
-        const response = await fetcher(
-          `${options.baseUrl.replace(/\/$/, "")}/internal/v1/device-commands`,
-          {
-            method: "POST",
-            headers,
-            body: JSON.stringify({
-              tenantId: context.tenantId,
-              userId: context.userId,
-              taskId: context.taskId,
-              ...(typeof input["deviceId"] === "string" ? { deviceId: input["deviceId"] } : {}),
-              actionType: input["actionType"],
-              payload: input["payload"],
-              requiredPermission: input["requiredPermission"],
-              riskClass: input["riskClass"] ?? "R2",
-              requiresForeground: input["requiresForeground"] ?? true,
-              requiresConfirmation: input["requiresConfirmation"] ?? true,
-              idempotencyKey: context.idempotencyKey,
-            }),
-            signal: cancellation.signal,
-          },
-        );
-        if (!response.ok)
-          throw new Error(`Device command creation returned HTTP ${response.status}.`);
-        stored = (await response.json()) as StoredCommandResponse;
-      }
-      const commandId =
-        stored.command?.commandId ??
-        (typeof input["commandId"] === "string" ? input["commandId"] : "");
+      // Command identifiers are issued only by the control plane. The API operation is
+      // idempotent for a task step, so it also performs the durable lookup on retries.
+      // Never trust a model-authored commandId as a server-side continuation handle.
+      const response = await fetcher(
+        `${options.baseUrl.replace(/\/$/, "")}/internal/v1/device-commands`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            tenantId: context.tenantId,
+            userId: context.userId,
+            taskId: context.taskId,
+            ...(typeof input["deviceId"] === "string" ? { deviceId: input["deviceId"] } : {}),
+            actionType: input["actionType"],
+            payload: input["payload"],
+            requiredPermission: input["requiredPermission"],
+            riskClass: input["riskClass"] ?? "R2",
+            requiresForeground: input["requiresForeground"] ?? true,
+            requiresConfirmation: input["requiresConfirmation"] ?? true,
+            idempotencyKey: context.idempotencyKey,
+          }),
+          signal: cancellation.signal,
+        },
+      );
+      if (!response.ok)
+        throw new Error(`Device command creation returned HTTP ${response.status}.`);
+      const stored = (await response.json()) as StoredCommandResponse;
+      const commandId = stored.command?.commandId ?? "";
       if (stored.status === "COMPLETED" && stored.result !== null && stored.result !== undefined) {
         const succeeded = stored.result.status === "SUCCEEDED";
         const evidenceId = `evd_${createHash("sha256")
           .update(stored.result.evidenceDigest ?? JSON.stringify(stored.result.result))
           .digest("hex")
           .slice(0, 24)}`;
+        const installedApps = stored.result.result["operation"] === "check_installed_apps";
+        const matches = Array.isArray(stored.result.result["matches"])
+          ? stored.result.result["matches"]
+          : [];
+        const installedSummary =
+          installedApps && succeeded
+            ? matches.length > 0
+              ? `The registered device reports ${matches
+                  .map((match) =>
+                    match !== null && typeof match === "object" && "label" in match
+                      ? String((match as { label: unknown }).label)
+                      : "a supported notes app",
+                  )
+                  .join(", ")} is installed.`
+              : "The registered device did not find a supported notes app."
+            : null;
         return {
           status: succeeded ? "SUCCEEDED" : "FAILED",
           data: { commandId, deviceResult: stored.result.result },
           sanitizedMessage: succeeded
-            ? "The device returned a valid signed success result."
+            ? (installedSummary ?? "The device returned a valid signed success result.")
             : `The device action ended with ${stored.result.status.toLowerCase().replaceAll("_", " ")}.`,
           provider: { requestId: commandId, statusCode: 200 },
           retryable: false,
@@ -134,8 +139,11 @@ export function registerDeviceTool(
       if (stored.status === "EXPIRED" || stored.status === "NOT_FOUND") {
         return {
           status: "FAILED",
-          sanitizedMessage: "The signed device command expired before completion.",
-          provider: { requestId: commandId, statusCode: 410 },
+          sanitizedMessage:
+            stored.status === "EXPIRED"
+              ? "The signed device command expired before completion."
+              : "The device command could not be found.",
+          provider: { requestId: commandId, statusCode: stored.status === "EXPIRED" ? 410 : 404 },
           retryable: false,
           errorClass: "cancelled",
           sideEffectState: "definitely_not_started",
@@ -209,7 +217,7 @@ export function registerDeviceTool(
         ...result,
         status: passed ? "SUCCEEDED" : "FAILED",
         sanitizedMessage: passed
-          ? "The API independently revalidated the durable signed device result."
+          ? result.sanitizedMessage
           : "The durable device result did not match the verified execution response.",
         errorClass: passed ? "none" : "unknown",
         sideEffectState: passed ? "definitely_completed" : "unknown",

@@ -83,6 +83,42 @@ function extractOutputText(payload: Record<string, unknown>): string {
   return texts.join("");
 }
 
+function safeProviderErrorField(value: unknown): string | null {
+  if (typeof value !== "string" && typeof value !== "number") return null;
+  const normalized = Array.from(String(value), (character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 0x1f || codePoint === 0x7f ? " " : character;
+  })
+    .join("")
+    .replace(/\s+/g, " ")
+    .trim();
+  return normalized.length === 0 ? null : normalized.slice(0, 500);
+}
+
+async function providerResponseError(response: Response, prefix: string): Promise<Error> {
+  let detail = "";
+  try {
+    const payload = (await response.json()) as unknown;
+    const candidate =
+      payload !== null && typeof payload === "object" && !Array.isArray(payload)
+        ? ((payload as Record<string, unknown>)["error"] ?? payload)
+        : null;
+    if (candidate !== null && typeof candidate === "object" && !Array.isArray(candidate)) {
+      const fields = candidate as Record<string, unknown>;
+      const values = [
+        safeProviderErrorField(fields["type"]),
+        safeProviderErrorField(fields["code"]),
+        safeProviderErrorField(fields["param"]),
+        safeProviderErrorField(fields["message"]),
+      ].filter((value): value is string => value !== null);
+      if (values.length > 0) detail = `: ${values.join(" — ")}`;
+    }
+  } catch {
+    // Provider bodies can be empty or non-JSON. Status remains the authoritative public detail.
+  }
+  return new Error(`${prefix} with HTTP ${response.status}${detail}`);
+}
+
 export class MetaMuseSparkProvider implements ModelProvider {
   readonly #fetcher: typeof fetch;
 
@@ -140,8 +176,9 @@ export class MetaMuseSparkProvider implements ModelProvider {
       body: JSON.stringify(this.body(request, true)),
       signal,
     });
-    if (!response.ok || response.body === null) {
-      throw new Error(`Meta Model API request failed with HTTP ${response.status}`);
+    if (!response.ok) throw await providerResponseError(response, "Meta Model API request failed");
+    if (response.body === null) {
+      throw new Error(`Meta Model API request failed with HTTP ${response.status}: empty body`);
     }
 
     const providerRequestId = response.headers.get("x-request-id") ?? request.requestId;
@@ -201,7 +238,7 @@ export class MetaMuseSparkProvider implements ModelProvider {
       signal,
     });
     if (!response.ok) {
-      throw new Error(`Meta Model API structured request failed with HTTP ${response.status}`);
+      throw await providerResponseError(response, "Meta Model API structured request failed");
     }
     const payload = (await response.json()) as Record<string, unknown>;
     const text = extractOutputText(payload);

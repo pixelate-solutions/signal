@@ -108,6 +108,37 @@ describe("authoritative task service", () => {
     expect((await h.service.getTask(h.principal, task.id)).state).toBe("WAITING_USER");
   });
 
+  it("preserves a policy-computed material digest for an approval", async () => {
+    const h = harness();
+    const { task } = await createTask(h);
+    await h.service.transition(h.principal, task.id, "PLANNING", {
+      type: "workflow",
+      id: task.workflowId,
+    });
+    await h.service.transition(h.principal, task.id, "RUNNING", {
+      type: "workflow",
+      id: task.workflowId,
+    });
+    const policyDigest = `sha256:${"a".repeat(64)}`;
+    const action = await h.service.createActionRequest(h.principal, task.id, {
+      type: "APPROVAL",
+      title: "Send the approved message?",
+      description: "The policy engine requires approval for this exact action.",
+      materialPayload: { recipient: "admin@pixelate.solutions", body: "Hello from Signal" },
+      materialDigest: policyDigest,
+      risk: "R2",
+      expiresAt: new Date("2026-07-18T13:00:00.000Z"),
+    });
+
+    expect(action.materialDigest).toBe(policyDigest);
+    await expect(
+      h.service.respondToAction(h.principal, action.id, {
+        response: "APPROVE",
+        materialDigest: policyDigest,
+      }),
+    ).resolves.toMatchObject({ materialDigest: policyDigest });
+  });
+
   it("keeps a digest-bound action pending until distinct approvers reach quorum", async () => {
     let id = 0;
     const store = new InMemoryTaskStore();
@@ -193,6 +224,33 @@ describe("authoritative task service", () => {
     expect(events.at(-1)).toMatchObject({
       type: "task.completed",
       evidenceIds: ["evd_demo0001"],
+    });
+  });
+
+  it("recovers an unchanged internal failure with an auditable event", async () => {
+    const h = harness();
+    const { task } = await createTask(h);
+    await h.service.transition(h.principal, task.id, "PLANNING", {
+      type: "workflow",
+      id: task.workflowId,
+    });
+    await h.service.transition(h.principal, task.id, "FAILED", {
+      type: "workflow",
+      id: task.workflowId,
+    });
+    const failed = await h.service.getTask(h.principal, task.id);
+    h.setNow("2026-07-18T12:01:00.000Z");
+    await expect(
+      h.service.recoverFromInternalFailure(h.principal, task.id, {
+        expectedUpdatedAt: failed.updatedAt,
+        expectedLastSequence: failed.lastSequence,
+        reason: "The validator failed before any provider side effect began.",
+      }),
+    ).resolves.toMatchObject({ state: "RUNNING", completedAt: null });
+    expect((await h.service.getEvents(h.principal, task.id)).at(-1)).toMatchObject({
+      type: "task.state_changed",
+      summary: "Signal recovered the task after an internal failure.",
+      details: { from: "FAILED", to: "RUNNING", recovery: true },
     });
   });
 

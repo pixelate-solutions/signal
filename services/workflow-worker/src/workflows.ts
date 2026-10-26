@@ -114,9 +114,20 @@ export async function taskWorkflow(input: TaskWorkflowInput): Promise<TaskWorkfl
     await activities.transitionTask(task, "PLANNING");
   }
 
-  const plan: Plan = await activities.retrieveAndPlan(task);
-  checkpoint = { ...checkpoint, state: "RUNNING" };
-  await activities.transitionTask(task, "RUNNING");
+  let plan: Plan;
+  try {
+    plan = await activities.retrieveAndPlan(task);
+  } catch {
+    const reason = "Planning failed before any external action was performed.";
+    await activities.failTask(task, reason);
+    checkpoint = { ...checkpoint, state: "FAILED", lastObservation: reason };
+    await activities.persistCheckpoint(task, checkpoint);
+    return checkpoint;
+  }
+  if (checkpoint.state !== "RUNNING") {
+    checkpoint = { ...checkpoint, state: "RUNNING" };
+    await activities.transitionTask(task, "RUNNING");
+  }
 
   while (checkpoint.iteration < 30) {
     if (checkpoint.cancelRequested) {

@@ -38,7 +38,7 @@ describe("model providers", () => {
   it("fails closed when the Meta credential is unavailable", async () => {
     const provider = new MetaMuseSparkProvider({
       baseUrl: "https://api.meta.ai/v1",
-      model: "meta/muse-spark-1.1",
+      model: "muse-spark-1.1",
       apiVersion: "public-preview-2026-07",
     });
     await expect(provider.health()).resolves.toMatchObject({ status: "unhealthy" });
@@ -72,7 +72,7 @@ describe("model providers", () => {
     const provider = new MetaMuseSparkProvider({
       baseUrl: "https://api.meta.ai/v1/",
       apiKey: "test-key",
-      model: "meta/muse-spark-1.1",
+      model: "muse-spark-1.1",
       apiVersion: "public-preview-2026-07",
       fetcher,
     });
@@ -87,8 +87,43 @@ describe("model providers", () => {
     );
     expect(response.metadata).toMatchObject({
       provider: "meta-model-api",
-      model: "meta/muse-spark-1.1",
+      model: "muse-spark-1.1",
       requestId: "meta_req_1",
     });
+  });
+
+  it("surfaces a bounded provider validation reason without echoing the response body", async () => {
+    const provider = new MetaMuseSparkProvider({
+      baseUrl: "https://api.meta.ai/v1",
+      apiKey: "test-key",
+      model: "muse-spark-1.1",
+      apiVersion: "public-preview-2026-07",
+      fetcher: async () =>
+        new Response(
+          JSON.stringify({
+            error: {
+              type: "invalid_request_error",
+              param: "schema",
+              message: "additionalProperties must be false.",
+              ignored: "do-not-include-this-field",
+            },
+          }),
+          { status: 400 },
+        ),
+    });
+
+    await expect(
+      provider.completeStructured(
+        {
+          ...baseRequest,
+          schemaName: "plan",
+          schema: z.object({ plan: z.array(z.string()) }),
+          jsonSchema: { type: "object" },
+        },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(
+      "HTTP 400: invalid_request_error — schema — additionalProperties must be false.",
+    );
   });
 });

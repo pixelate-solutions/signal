@@ -1,0 +1,21 @@
+services:
+  api:
+    environment:
+      DEMO_MODE: "false"
+      APP_PUBLIC_URL: "${APP_PUBLIC_URL:-http://localhost:3000}"
+      COMPOSIO_API_KEY: "${COMPOSIO_API_KEY:?COMPOSIO_API_KEY is required for live provider mode}"
+      COMPOSIO_CALLBACK_URL: "${COMPOSIO_CALLBACK_URL:?COMPOSIO_CALLBACK_URL is required for live provider mode}"
+      COMPOSIO_AUTH_CONFIGS_JSON: "${COMPOSIO_AUTH_CONFIGS_JSON:?COMPOSIO_AUTH_CONFIGS_JSON is required for live provider mode}"
+      COMPOSIO_TOOLS_JSON: "${COMPOSIO_TOOLS_JSON:?COMPOSIO_TOOLS_JSON is required for live provider mode}"
+  workflow-worker:
+    environment:
+      DEMO_MODE: "false"
+      APP_PUBLIC_URL: "${APP_PUBLIC_URL:-http://localhost:3000}"
+      META_MODEL_API_BASE_URL: "${META_MODEL_API_BASE_URL:-https://api.meta.ai/v1}"
+      META_MODEL_API_KEY: "${META_MODEL_API_KEY:?META_MODEL_API_KEY is required for live provider mode}"
+      META_MODEL_ID: "${META_MODEL_ID:-muse-spark-1.1}"
+      META_MODEL_API_VERSION: "${META_MODEL_API_VERSION:-public-preview-2026-07}"
+      COMPOSIO_API_KEY: "${COMPOSIO_API_KEY:?COMPOSIO_API_KEY is required for live provider mode}"
+      COMPOSIO_CALLBACK_URL: "${COMPOSIO_CALLBACK_URL:?COMPOSIO_CALLBACK_URL is required for live provider mode}"
+      COMPOSIO_AUTH_CONFIGS_JSON: "${COMPOSIO_AUTH_CONFIGS_JSON:?COMPOSIO_AUTH_CONFIGS_JSON is required for live provider mode}"
+      COMPOSIO_TOOLS_JSON: "${COMPOSIO_TOOLS_JSON:?COMPOSIO_TOOLS_JSON is required for live provider mode}"

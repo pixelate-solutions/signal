@@ -1,4 +1,5 @@
 import { Ajv } from "ajv";
+import addFormatsImport from "ajv-formats";
 
 import {
   toolExecutionContextSchema,
@@ -10,6 +11,8 @@ import { redact } from "@signal/observability";
 import type { TenantRecordStore } from "@signal/persistence";
 import type { PolicyEvaluator, PolicyRequest } from "@signal/policy-client";
 import type { ToolAdapter, ToolRegistry } from "@signal/tool-sdk";
+
+const addFormats = addFormatsImport as unknown as (ajv: Ajv) => Ajv;
 
 export type GatewayExecution = {
   toolName: string;
@@ -40,6 +43,128 @@ export type GatewayAudit = {
   }): Promise<void>;
 };
 
+export type UnknownSideEffectInvestigation = {
+  tenantId: string;
+  taskId: string;
+  idempotencyKey: string;
+  investigatedBy: string;
+  evidenceIds: string[];
+  summary: string;
+  observedAt: string;
+};
+
+export type ConfirmedUnknownSideEffect = UnknownSideEffectInvestigation & {
+  executionId: string;
+};
+
+function validateInvestigation(input: UnknownSideEffectInvestigation): void {
+  if (!input.idempotencyKey.startsWith(`${input.taskId}:`)) {
+    throw new Error("The durable idempotency key does not belong to the investigated task.");
+  }
+  if (input.investigatedBy.trim().length === 0) {
+    throw new Error("The provider investigation must identify its operator.");
+  }
+  if (
+    input.evidenceIds.length === 0 ||
+    input.evidenceIds.some((value) => !/^evd_[a-zA-Z0-9_-]{8,}$/.test(value))
+  ) {
+    throw new Error("Retry requires durable provider-state evidence.");
+  }
+  if (input.summary.trim().length === 0 || input.summary.length > 1_000) {
+    throw new Error("The provider investigation summary must be between 1 and 1000 characters.");
+  }
+  if (!Number.isFinite(Date.parse(input.observedAt))) {
+    throw new Error("The provider investigation timestamp is invalid.");
+  }
+}
+
+function investigationId(input: UnknownSideEffectInvestigation): string {
+  return `${input.idempotencyKey}:${input.observedAt}`;
+}
+
+export async function authorizeRetryAfterUnknownSideEffect(
+  records: TenantRecordStore,
+  input: UnknownSideEffectInvestigation,
+): Promise<void> {
+  validateInvestigation(input);
+
+  await records.runExclusive(input.tenantId, async (transaction) => {
+    const value = await transaction.get<ToolResult>("tool.idempotency", input.idempotencyKey);
+    if (value === undefined) {
+      throw new Error("The failed durable tool execution was not found.");
+    }
+    const priorResult = toolResultSchema.parse(value);
+    if (priorResult.status !== "FAILED" || priorResult.sideEffectState !== "unknown") {
+      throw new Error("Only a failed execution with unknown provider state may be released.");
+    }
+    await transaction.put("tool.side-effect-investigations", investigationId(input), {
+      ...input,
+      resolution: "definitely_not_started",
+      priorResult,
+    });
+    await transaction.remove("tool.idempotency", input.idempotencyKey);
+  });
+}
+
+export async function confirmUnknownSideEffectCompleted(
+  records: TenantRecordStore,
+  input: ConfirmedUnknownSideEffect,
+): Promise<ToolResult> {
+  validateInvestigation(input);
+  if (!/^tex_[a-zA-Z0-9_-]{8,}$/.test(input.executionId)) {
+    throw new Error("The investigated tool execution ID is invalid.");
+  }
+
+  return records.runExclusive(input.tenantId, async (transaction) => {
+    const value = await transaction.get<ToolResult>("tool.idempotency", input.idempotencyKey);
+    if (value === undefined) {
+      throw new Error("The failed durable tool execution was not found.");
+    }
+    const priorResult = toolResultSchema.parse(value);
+    if (priorResult.status !== "FAILED" || priorResult.sideEffectState !== "unknown") {
+      throw new Error("Only a failed execution with unknown provider state may be confirmed.");
+    }
+    const storedExecution = await transaction.get<Record<string, unknown>>(
+      "tool.executions",
+      input.executionId,
+    );
+    if (
+      storedExecution === undefined ||
+      storedExecution["taskId"] !== input.taskId ||
+      storedExecution["result"] === undefined
+    ) {
+      throw new Error("The matching durable tool execution audit was not found.");
+    }
+    const auditedResult = toolResultSchema.parse(storedExecution["result"]);
+    if (auditedResult.status !== "FAILED" || auditedResult.sideEffectState !== "unknown") {
+      throw new Error("The durable tool execution audit is not awaiting investigation.");
+    }
+    const completedResult: ToolResult = toolResultSchema.parse({
+      ...priorResult,
+      status: "SUCCEEDED",
+      sanitizedMessage: input.summary,
+      retryable: false,
+      errorClass: "none",
+      sideEffectState: "definitely_completed",
+      evidenceIds: [...new Set([...priorResult.evidenceIds, ...input.evidenceIds])],
+      verificationHint: "A separate provider read confirmed the exact side effect.",
+    });
+    await transaction.put("tool.side-effect-investigations", investigationId(input), {
+      ...input,
+      resolution: "definitely_completed",
+      priorResult,
+      completedResult,
+    });
+    await transaction.put("tool.idempotency", input.idempotencyKey, completedResult);
+    await transaction.put("tool.executions", input.executionId, {
+      ...storedExecution,
+      result: completedResult,
+      recoveredAt: input.observedAt,
+    });
+    return completedResult;
+  });
+}
+
 const noCredentials: CredentialAvailability = {
   available: async () => false,
 };
@@ -49,7 +174,7 @@ const noAudit: GatewayAudit = {
 };
 
 export class ToolGateway {
-  readonly #ajv = new Ajv({ allErrors: true, removeAdditional: false, strict: true });
+  readonly #ajv: Ajv;
   readonly #idempotency = new Map<string, Promise<ToolResult>>();
 
   public constructor(
@@ -58,7 +183,10 @@ export class ToolGateway {
     private readonly credentials: CredentialAvailability = noCredentials,
     private readonly audit: GatewayAudit = noAudit,
     private readonly durableIdempotency?: TenantRecordStore,
-  ) {}
+  ) {
+    this.#ajv = new Ajv({ allErrors: true, removeAdditional: false, strict: true });
+    addFormats(this.#ajv);
+  }
 
   public async execute(execution: GatewayExecution): Promise<ToolResult> {
     const context = toolExecutionContextSchema.parse(execution.context);

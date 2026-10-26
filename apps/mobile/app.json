@@ -15,7 +15,8 @@
       "associatedDomains": ["applinks:signal.pixelate.solutions"],
       "infoPlist": {
         "NSCameraUsageDescription": "Signal uses the camera only when you choose to attach or scan a document.",
-        "NSPhotoLibraryUsageDescription": "Signal accesses selected photos only when you attach them to a task."
+        "NSPhotoLibraryUsageDescription": "Signal accesses selected photos only when you attach them to a task.",
+        "LSApplicationQueriesSchemes": ["mobilenotes", "onenote", "evernote", "notion"]
       }
     },
     "android": {

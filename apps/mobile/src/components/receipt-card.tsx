@@ -4,11 +4,15 @@ import { Text, View } from "react-native";
 import type { Task, TaskEvent } from "@signal/contracts";
 import { signalColors, signalRadius, signalSpacing } from "@signal/ui";
 
+import { isQuestionObjective, receiptOutcome } from "./receipt-summary";
+
 export function ReceiptCard({ task, events }: { task: Task; events: readonly TaskEvent[] }) {
   if (task.state !== "COMPLETED" && task.state !== "COMPLETED_WITH_WARNINGS") return null;
   const toolEvents = events.filter((event) => event.type === "tool.execution_succeeded");
   const evidence = new Set(events.flatMap((event) => event.evidenceIds));
   const verified = task.successCriteria.filter((criterion) => criterion.status === "PASSED");
+  const question = isQuestionObjective(task.objective);
+  const outcome = receiptOutcome(task, events);
   return (
     <View
       accessibilityLabel="Verified task receipt"
@@ -24,7 +28,7 @@ export function ReceiptCard({ task, events }: { task: Task; events: readonly Tas
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
         <ReceiptText color={signalColors.tealDark} size={20} />
         <Text style={{ color: signalColors.tealDark, fontWeight: "900", letterSpacing: 0.7 }}>
-          VERIFIED RECEIPT
+          {question ? "VERIFIED ANSWER" : "VERIFIED RECEIPT"}
         </Text>
       </View>
       <Text
@@ -36,7 +40,7 @@ export function ReceiptCard({ task, events }: { task: Task; events: readonly Tas
           marginTop: 12,
         }}
       >
-        {task.objective}
+        {outcome}
       </Text>
       <View style={{ gap: 7, marginTop: signalSpacing.md }}>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 7 }}>

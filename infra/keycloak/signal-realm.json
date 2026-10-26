@@ -1,6 +1,7 @@
 {
   "realm": "signal",
   "enabled": true,
+  "sslRequired": "none",
   "displayName": "Signal Local Identity",
   "registrationAllowed": true,
   "resetPasswordAllowed": true,
@@ -14,7 +15,12 @@
   "webAuthnPolicyPasswordlessSignatureAlgorithms": ["ES256", "RS256"],
   "webAuthnPolicyPasswordlessUserVerificationRequirement": "required",
   "roles": {
-    "realm": [{ "name": "user" }, { "name": "operator" }, { "name": "tenant_admin" }]
+    "realm": [
+      { "name": "user" },
+      { "name": "operator" },
+      { "name": "tenant_admin" },
+      { "name": "offline_access" }
+    ]
   },
   "clients": [
     {
@@ -32,8 +38,13 @@
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
       "protocol": "openid-connect",
-      "redirectUris": ["signal://oauth/callback", "http://localhost:8082/*"],
-      "webOrigins": ["http://localhost:8082"],
+      "redirectUris": [
+        "signal://oauth/callback",
+        "http://localhost:8082/*",
+        "http://127.0.0.1:8082/*"
+      ],
+      "webOrigins": ["http://localhost:8082", "http://127.0.0.1:8082"],
+      "defaultClientScopes": ["web-origins", "acr", "profile", "roles", "basic", "email"],
       "optionalClientScopes": ["offline_access"],
       "protocolMappers": [
         {
@@ -57,8 +68,9 @@
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
       "protocol": "openid-connect",
-      "redirectUris": ["http://localhost:4173/*"],
-      "webOrigins": ["http://localhost:4173"],
+      "redirectUris": ["http://localhost:4173/*", "http://127.0.0.1:4173/*"],
+      "webOrigins": ["http://localhost:4173", "http://127.0.0.1:4173"],
+      "defaultClientScopes": ["web-origins", "acr", "profile", "roles", "basic", "email"],
       "optionalClientScopes": ["offline_access"],
       "protocolMappers": [
         {
@@ -84,7 +96,7 @@
       "lastName": "Demo",
       "email": "demo@signal.local",
       "credentials": [{ "type": "password", "value": "signal-local-demo", "temporary": false }],
-      "realmRoles": ["user", "operator", "tenant_admin"]
+      "realmRoles": ["user", "operator", "tenant_admin", "offline_access"]
     }
   ]
 }

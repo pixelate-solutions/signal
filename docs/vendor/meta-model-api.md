@@ -8,7 +8,7 @@ Verified: 2026-07-18.
 - Base URL: operator-configured `META_MODEL_API_BASE_URL`; current public base is `https://api.meta.ai/v1`.
 - Primary surface: `POST /responses` with Bearer authentication.
 - Compatibility surface: `POST /chat/completions` may be used only by an explicitly configured adapter version.
-- Model: `meta/muse-spark-1.1` per the product FRD. The provider records the response model identifier returned by Meta because preview accounts may expose an unqualified wire ID.
+- Model: `muse-spark-1.1`, as exposed by Meta's authenticated `/models` endpoint. The provider records the response model identifier returned by Meta so preview-contract changes remain visible in evidence and telemetry.
 - Key: `META_MODEL_API_KEY` in Signal; deployments may source Meta's documented `MODEL_API_KEY` into that secret handle.
 - Version metadata: `META_MODEL_API_VERSION=public-preview-2026-07`.
 

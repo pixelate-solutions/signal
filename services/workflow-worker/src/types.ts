@@ -50,6 +50,7 @@ export type StepOutcome =
       title: string;
       description: string;
       materialPayload: Record<string, unknown>;
+      materialDigest?: string;
       risk: "R0" | "R1" | "R2" | "R3" | "R4";
       approvalThreshold?: number;
       approverUserIds?: string[];

@@ -243,9 +243,16 @@ export const signalApi = {
     provider: string;
     toolkit: string;
     requestedScopes: string[];
+    originatingTaskId?: string;
     returnDeepLink: string;
   }) =>
-    request<{ state: string; redirectUrl: string; expiresAt: string }>("/v1/connections/link", {
+    request<{
+      state: string;
+      redirectUrl: string;
+      expiresAt: string;
+      alreadyConnected?: boolean;
+      connectionId?: string;
+    }>("/v1/connections/link", {
       method: "POST",
       body: JSON.stringify(input),
     }),

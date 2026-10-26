@@ -8,7 +8,14 @@
     "noFallthroughCasesInSwitch": true,
     "useUnknownInCatchVariables": true,
     "verbatimModuleSyntax": true,
-    "types": ["react", "react-native"]
+    "types": [
+      "react",
+      "react-native"
+    ]
   },
-  "include": ["App.tsx", "src/**/*.ts", "src/**/*.tsx", "expo-env.d.ts"]
+  "include": [
+    "App.tsx",
+    "src/**/*.ts",
+    "src/**/*.tsx"
+  ]
 }

@@ -3,6 +3,8 @@ import * as AuthSession from "expo-auth-session";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 
+import { resolveOidcIssuer, resolveOidcRedirectUri } from "./configuration";
+
 const SESSION_KEY = "signal.oidc.session.v1";
 
 export type OidcConfiguration = {
@@ -29,16 +31,16 @@ function extraValue(key: string): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+const webOrigin =
+  Platform.OS === "web" && typeof window !== "undefined" ? window.location.origin : undefined;
+const configuredIssuer = process.env.EXPO_PUBLIC_OIDC_ISSUER ?? extraValue("oidcIssuer");
+const configuredRedirect =
+  process.env.EXPO_PUBLIC_OIDC_REDIRECT_URI ?? extraValue("oidcRedirectUri");
+
 export const oidcConfiguration: OidcConfiguration = {
-  issuer:
-    process.env.EXPO_PUBLIC_OIDC_ISSUER ??
-    extraValue("oidcIssuer") ??
-    "http://localhost:8080/realms/signal",
+  issuer: resolveOidcIssuer(configuredIssuer, webOrigin),
   clientId: process.env.EXPO_PUBLIC_OIDC_CLIENT_ID ?? extraValue("oidcClientId") ?? "signal-mobile",
-  redirectUri:
-    process.env.EXPO_PUBLIC_OIDC_REDIRECT_URI ??
-    extraValue("oidcRedirectUri") ??
-    "signal://oauth/callback",
+  redirectUri: resolveOidcRedirectUri(configuredRedirect, webOrigin),
   scopes: ["openid", "profile", "email", "offline_access"],
 };
 

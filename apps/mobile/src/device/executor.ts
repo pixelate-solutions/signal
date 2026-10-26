@@ -21,7 +21,11 @@ import {
   type DeviceCommandResult,
 } from "@signal/contracts";
 
-import { reviewedAndroidIntent, reviewedAppIntentUrl } from "./intent-policy";
+import {
+  reviewedAndroidIntent,
+  reviewedAppIntentUrl,
+  reviewedInstalledAppProbes,
+} from "./intent-policy";
 
 const DEVICE_SECRET_KEY = "signal.device.signing-secret";
 const DEVICE_PUBLIC_KEY = "signal.device.signing-public";
@@ -152,6 +156,37 @@ async function perform(command: DeviceCommand): Promise<{
   switch (command.actionType) {
     case "open_url":
     case "app_intent": {
+      if (
+        command.actionType === "app_intent" &&
+        stringField(payload, "operation") === "check_installed_apps"
+      ) {
+        const probes = reviewedInstalledAppProbes(Platform.OS, payload["candidate_bundle_ids"]);
+        if (probes.length === 0) {
+          return {
+            status: "UNSUPPORTED",
+            result: {
+              operation: "check_installed_apps",
+              reason: "No requested app identifier is declared for this platform.",
+            },
+          };
+        }
+        const matches: Array<{ identifier: string; label: string }> = [];
+        for (const probe of probes) {
+          if (await Linking.canOpenURL(probe.url).catch(() => false)) {
+            matches.push({ identifier: probe.identifier, label: probe.label });
+          }
+        }
+        return {
+          status: "SUCCEEDED",
+          result: {
+            operation: "check_installed_apps",
+            installed: matches.length > 0,
+            matches,
+            checkedIdentifiers: probes.map((probe) => probe.identifier),
+            platform: Platform.OS,
+          },
+        };
+      }
       let url: string;
       try {
         url = reviewedAppIntentUrl(stringField(payload, "url"));

@@ -33,6 +33,7 @@
     "db:seed": "pnpm --filter @signal/database db:seed",
     "demo": "pnpm --filter @signal/api dev",
     "compose:up": "docker compose up --build",
+    "compose:live": "docker compose -f compose.yaml -f compose.live.yaml up --build",
     "compose:down": "docker compose down",
     "security:scan": "node scripts/secret-scan.mjs"
   },

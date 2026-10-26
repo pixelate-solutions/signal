@@ -1,5 +1,47 @@
 const appIntentSchemes = new Set(["https:", "http:", "mailto:", "sms:", "smsto:", "tel:", "geo:"]);
 
+const installedAppProbes: Record<
+  "ios" | "android",
+  ReadonlyMap<string, { label: string; url: string }>
+> = {
+  ios: new Map([
+    ["com.apple.mobilenotes", { label: "Apple Notes", url: "mobilenotes://" }],
+    ["com.microsoft.Office.OneNote", { label: "Microsoft OneNote", url: "onenote://" }],
+    ["com.evernote.iPhone.Evernote", { label: "Evernote", url: "evernote://" }],
+    ["notion.id", { label: "Notion", url: "notion://" }],
+  ]),
+  android: new Map([
+    ["com.google.android.keep", { label: "Google Keep", url: "comgooglekeep://" }],
+    ["com.microsoft.office.onenote", { label: "Microsoft OneNote", url: "onenote://" }],
+    ["com.evernote", { label: "Evernote", url: "evernote://" }],
+    ["notion.id", { label: "Notion", url: "notion://" }],
+  ]),
+};
+
+export type InstalledAppProbe = {
+  identifier: string;
+  label: string;
+  url: string;
+};
+
+export function reviewedInstalledAppProbes(
+  platform: "ios" | "android" | "web" | "windows" | "macos",
+  candidates: unknown,
+): InstalledAppProbe[] {
+  if (platform !== "ios" && platform !== "android") return [];
+  const requested = Array.isArray(candidates)
+    ? candidates.filter((candidate): candidate is string => typeof candidate === "string")
+    : [];
+  const allowlist = installedAppProbes[platform];
+  const seen = new Set<string>();
+  return requested.slice(0, 50).flatMap((identifier) => {
+    if (seen.has(identifier)) return [];
+    seen.add(identifier);
+    const probe = allowlist.get(identifier);
+    return probe === undefined ? [] : [{ identifier, ...probe }];
+  });
+}
+
 const consumerAndroidActions = new Map<string, ReadonlySet<string>>([
   ["android.intent.action.VIEW", new Set(["https:", "http:", "geo:"])],
   ["android.intent.action.SENDTO", new Set(["mailto:", "sms:", "smsto:"])],

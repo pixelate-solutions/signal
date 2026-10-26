@@ -7,6 +7,8 @@ import EventSource from "react-native-sse";
 import { taskEventTypeSchema, type TaskEvent } from "@signal/contracts";
 
 import { signalApi, signalApiBaseUrl } from "../api/client";
+import { getValidAccessToken } from "../auth/token-store";
+import { useSignalStore } from "../state/use-signal-store";
 import type { TaskDetail } from "../types";
 
 const sequenceKey = (taskId: string): string => `signal.task.${taskId}.sequence`;
@@ -71,9 +73,21 @@ export function useTaskReconnect(taskId: string | null) {
       }
     };
 
-    try {
+    const connect = async () => {
+      const [accessToken, tenantId] = await Promise.all([
+        getValidAccessToken(),
+        Promise.resolve(useSignalStore.getState().activeTenantId),
+      ]);
+      if (closed) return;
       stream = new EventSource<TaskEvent["type"]>(
         `${signalApiBaseUrl}/v1/tasks/${encodeURIComponent(taskId)}/stream?after=${String(lastSequence.current)}`,
+        {
+          headers: {
+            accept: "text/event-stream",
+            ...(accessToken === null ? {} : { authorization: `Bearer ${accessToken}` }),
+            ...(tenantId === null ? {} : { "x-signal-tenant-id": tenantId }),
+          },
+        },
       );
       const receive = (message: { data: string | null }) => {
         try {
@@ -87,9 +101,10 @@ export function useTaskReconnect(taskId: string | null) {
         stream.addEventListener(eventType, receive);
       }
       stream.addEventListener("error", () => void poll());
-    } catch {
+    };
+    void connect().catch(() => {
       // Some platform runtimes do not expose streaming fetch; polling is the fallback.
-    }
+    });
     const pollTimer = setInterval(() => void poll(), 3_000);
     const appState = AppState.addEventListener("change", (state) => {
       if (state === "active") void poll();

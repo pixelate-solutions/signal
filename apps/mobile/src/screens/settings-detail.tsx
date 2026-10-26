@@ -338,14 +338,12 @@ function ConnectionsPanel() {
     mutationFn: (provider: "google" | "github") =>
       signalApi.linkConnection({
         provider,
-        toolkit: provider,
+        toolkit: provider === "google" ? "gmail" : provider,
         requestedScopes:
           provider === "google"
             ? [
-                "openid",
-                "email",
-                "https://www.googleapis.com/auth/calendar.events",
                 "https://www.googleapis.com/auth/gmail.readonly",
+                "https://www.googleapis.com/auth/gmail.send",
               ]
             : ["read:user", "repo"],
         returnDeepLink: "signal://settings/connections",

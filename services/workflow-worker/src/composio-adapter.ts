@@ -23,6 +23,7 @@ type ComposioVerification = {
   assertions: {
     observedPath: string;
     expected: ValueBinding;
+    comparison: "exact" | "trimmed_text";
   }[];
 };
 
@@ -89,9 +90,19 @@ function verification(value: unknown, path: string): ComposioVerification | null
     if (!/^[a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+)*$/.test(observedPath)) {
       throw new Error(`${path}.assertions[${index}].observedPath is unsafe.`);
     }
+    const rawComparison = assertion["comparison"];
+    if (
+      rawComparison !== undefined &&
+      rawComparison !== "exact" &&
+      rawComparison !== "trimmed_text"
+    ) {
+      throw new Error(`${path}.assertions[${index}].comparison is unsupported.`);
+    }
+    const comparison: "exact" | "trimmed_text" = rawComparison ?? "exact";
     return {
       observedPath,
       expected: binding(assertion["expected"], `${path}.assertions[${index}].expected`),
+      comparison,
     };
   });
   return {
@@ -187,7 +198,18 @@ function boundValue(
   return valueAt(valueBinding.source === "input" ? input : result, valueBinding.path);
 }
 
-function sameValue(left: unknown, right: unknown): boolean {
+function sameValue(
+  left: unknown,
+  right: unknown,
+  comparison: "exact" | "trimmed_text" = "exact",
+): boolean {
+  if (comparison === "trimmed_text") {
+    return (
+      typeof left === "string" &&
+      typeof right === "string" &&
+      left.replaceAll("\r\n", "\n").trim() === right.replaceAll("\r\n", "\n").trim()
+    );
+  }
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
@@ -296,6 +318,7 @@ function adapter(
           sameValue(
             valueAt(observed.data, assertion.observedPath),
             boundValue(assertion.expected, input, result.data),
+            assertion.comparison,
           ),
         );
       const verificationEvidence = {
@@ -305,6 +328,7 @@ function adapter(
           passed: sameValue(
             valueAt(observed.data, assertion.observedPath),
             boundValue(assertion.expected, input, result.data),
+            assertion.comparison,
           ),
         })),
       };

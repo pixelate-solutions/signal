@@ -73,19 +73,30 @@ function SignalTabs() {
 function AuthenticatedSignal() {
   const hydrate = useSignalStore((state) => state.hydrate);
   useEffect(() => {
-    void hydrate();
-    void ensureDeviceRegistered().catch(() => {
-      // Device actions remain unavailable until the authenticated control plane can register this key.
+    void hydrate().catch(() => {
+      // A storage read failure should not prevent the authenticated shell from loading.
     });
-    void runPendingDeviceCommands();
+    if (Platform.OS === "web") return undefined;
+    const registerDevice = () => {
+      void ensureDeviceRegistered().catch(() => {
+        // Device actions remain unavailable until the authenticated control plane can register this key.
+      });
+    };
+    const pollDeviceCommands = () => {
+      void runPendingDeviceCommands().catch(() => {
+        // The next foreground or interval poll retries after transient API/network failures.
+      });
+    };
+    registerDevice();
+    pollDeviceCommands();
     const interval = setInterval(() => {
-      if (AppState.currentState === "active") void runPendingDeviceCommands();
+      if (AppState.currentState === "active") pollDeviceCommands();
     }, 5_000);
     const appState = AppState.addEventListener("change", (state) => {
-      if (state === "active") void runPendingDeviceCommands();
+      if (state === "active") pollDeviceCommands();
     });
     const pushRotation = Notifications.addPushTokenListener(() => {
-      void ensureDeviceRegistered();
+      registerDevice();
     });
     return () => {
       clearInterval(interval);
@@ -116,6 +127,11 @@ function AuthenticatedSignal() {
 
 function AuthGate() {
   const auth = useAuth();
+  useEffect(() => {
+    if (auth.status !== "signed_out") return;
+    queryClient.clear();
+    useSignalStore.getState().setActiveTenant(null);
+  }, [auth.status]);
   return auth.status === "signed_in" ? (
     <BiometricLockGate>
       <AuthenticatedSignal />

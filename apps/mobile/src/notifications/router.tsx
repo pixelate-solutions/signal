@@ -2,17 +2,18 @@ import { useQueryClient } from "@tanstack/react-query";
 import * as Linking from "expo-linking";
 import * as Notifications from "expo-notifications";
 import { useEffect } from "react";
-import { Alert } from "react-native";
+import { Alert, Platform } from "react-native";
 
 import { signalApi } from "../api/client";
 import { useSignalStore } from "../state/use-signal-store";
 import { runPendingDeviceCommands } from "../device/runner";
+import { deepLinkSegments } from "./deep-link";
 
 const handledInvitations = new Set<string>();
 
 async function route(url: string, queryClient: ReturnType<typeof useQueryClient>): Promise<void> {
   const parsed = Linking.parse(url);
-  const segments = (parsed.path ?? "").split("/").filter(Boolean);
+  const segments = deepLinkSegments(parsed.hostname, parsed.path);
   const invitationToken = parsed.queryParams?.["token"];
   const invitationTenant = parsed.queryParams?.["tenantId"];
   if (
@@ -43,10 +44,17 @@ async function route(url: string, queryClient: ReturnType<typeof useQueryClient>
   const actionIndex = segments.indexOf("actions");
   const taskId = taskIndex >= 0 ? segments[taskIndex + 1] : undefined;
   const actionId = actionIndex >= 0 ? segments[actionIndex + 1] : undefined;
+  if (segments.includes("connections") || actionId?.startsWith("act_") === true) {
+    await queryClient.invalidateQueries({ queryKey: ["connections"] });
+  }
   if (segments.includes("device-commands")) {
     void runPendingDeviceCommands();
   }
   if (taskId?.startsWith("tsk_") === true) {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["task", taskId] }),
+      queryClient.invalidateQueries({ queryKey: ["actions"] }),
+    ]);
     useSignalStore.getState().routeToTask(taskId, actionId ?? null);
   }
 }
@@ -63,6 +71,12 @@ function routeResponse(
 export function NotificationRouter() {
   const queryClient = useQueryClient();
   useEffect(() => {
+    const link = Linking.addEventListener("url", ({ url }) => void route(url, queryClient));
+    void Linking.getInitialURL().then((initialUrl) => {
+      if (initialUrl !== null) void route(initialUrl, queryClient);
+    });
+    if (Platform.OS === "web") return () => link.remove();
+
     const received = Notifications.addNotificationReceivedListener((notification) => {
       void queryClient.invalidateQueries({ queryKey: ["actions"] });
       const data = notification.request.content.data ?? {};
@@ -74,15 +88,11 @@ export function NotificationRouter() {
       routeResponse(notification, queryClient);
       void queryClient.invalidateQueries({ queryKey: ["actions"] });
     });
-    const link = Linking.addEventListener("url", ({ url }) => void route(url, queryClient));
     const notification = Notifications.getLastNotificationResponse();
     if (notification !== null) {
       routeResponse(notification, queryClient);
       Notifications.clearLastNotificationResponse();
     }
-    void Linking.getInitialURL().then((initialUrl) => {
-      if (initialUrl !== null) void route(initialUrl, queryClient);
-    });
     return () => {
       received.remove();
       response.remove();

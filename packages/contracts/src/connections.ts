@@ -55,6 +55,8 @@ export const connectionLinkResultSchema = z
     state: z.string().min(32).max(2_048),
     redirectUrl: z.url(),
     expiresAt: utcTimestampSchema,
+    alreadyConnected: z.boolean().optional(),
+    connectionId: connectionIdSchema.optional(),
   })
   .strict();
 

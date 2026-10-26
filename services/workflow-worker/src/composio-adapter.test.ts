@@ -105,4 +105,56 @@ describe("configured Composio adapters", () => {
     expect(verified.evidenceIds).toHaveLength(2);
     expect(calls).toEqual(["TICKETS_CREATE", "TICKETS_GET"]);
   });
+
+  it("normalizes provider-added line endings when verifying message text", async () => {
+    const connections = {
+      executeComposioTool: async (input: { toolSlug: string }) =>
+        input.toolSlug === "TICKETS_CREATE"
+          ? {
+              successful: true,
+              data: { ticket: { id: "ticket-42", title: "Ship Signal" } },
+              error: null,
+              logId: "write-log",
+            }
+          : {
+              successful: true,
+              data: { ticket: { id: "ticket-42", title: "Ship Signal\r\n" } },
+              error: null,
+              logId: "read-log",
+            },
+    } as unknown as ConnectionManager;
+    const registry = new ToolRegistry();
+    registerConfiguredComposioTools(
+      registry,
+      connections,
+      writeConfiguration({
+        toolSlug: "TICKETS_GET",
+        toolVersion: "20260718_01",
+        arguments: { ticketId: { source: "result", path: "ticket.id" } },
+        assertions: [
+          {
+            observedPath: "ticket.title",
+            expected: { source: "input", path: "title" },
+            comparison: "trimmed_text",
+          },
+        ],
+      }),
+    );
+    const adapter = registry.get("composio.ticket.create", "1.0.0");
+    if (adapter === undefined || adapter.verify === undefined) {
+      throw new Error("The configured Composio adapter and verifier were not registered.");
+    }
+
+    const result = await adapter.execute({ title: "Ship Signal" }, context, {
+      signal: new AbortController().signal,
+    });
+    const verified = await adapter.verify({ title: "Ship Signal" }, result, context, {
+      signal: new AbortController().signal,
+    });
+
+    expect(verified).toMatchObject({
+      status: "SUCCEEDED",
+      sideEffectState: "definitely_completed",
+    });
+  });
 });

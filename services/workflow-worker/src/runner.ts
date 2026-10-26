@@ -30,7 +30,16 @@ export async function runDeterministicTaskHarness(
     await activities.transitionTask(task, "PLANNING");
     checkpoint = { ...checkpoint, state: "PLANNING" };
   }
-  const plan: Plan = await activities.retrieveAndPlan(task);
+  let plan: Plan;
+  try {
+    plan = await activities.retrieveAndPlan(task);
+  } catch {
+    const reason = "Planning failed before any external action was performed.";
+    await activities.failTask(task, reason);
+    checkpoint = { ...checkpoint, state: "FAILED", lastObservation: reason };
+    await activities.persistCheckpoint(task, checkpoint);
+    return checkpoint;
+  }
   if (checkpoint.state !== "RUNNING") {
     await activities.transitionTask(task, "RUNNING");
     checkpoint = { ...checkpoint, state: "RUNNING" };

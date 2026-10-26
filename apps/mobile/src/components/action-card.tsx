@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Haptics from "expo-haptics";
 import * as Linking from "expo-linking";
 import { Check, ExternalLink, KeyRound, Link2, ShieldAlert, X } from "lucide-react-native";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Alert, Image, Modal, Pressable, Text, TextInput, View } from "react-native";
 
 import type { ActionRequest, ActionResponseInput } from "@signal/contracts";
@@ -183,6 +183,7 @@ function SecureInputCard({ action }: { action: ActionRequest }) {
 }
 
 function ConnectionActionCard({ action }: { action: ActionRequest }) {
+  const queryClient = useQueryClient();
   const provider =
     typeof action.materialPayload["provider"] === "string"
       ? action.materialPayload["provider"]
@@ -194,25 +195,62 @@ function ConnectionActionCard({ action }: { action: ActionRequest }) {
   const scopes = Array.isArray(action.materialPayload["scopes"])
     ? action.materialPayload["scopes"].filter((scope): scope is string => typeof scope === "string")
     : ["openid", "profile", "email"];
+  const connections = useQuery({
+    queryKey: ["connections"],
+    queryFn: signalApi.listConnections,
+    refetchInterval: 2_000,
+  });
+  const connected = (connections.data?.items ?? []).some(
+    (connection) =>
+      connection.provider === provider &&
+      connection.toolkit === toolkit &&
+      connection.status === "ACTIVE" &&
+      scopes.every((scope) => connection.scopes.includes(scope)),
+  );
+  const automaticResumeAttempted = useRef(false);
+  const resume = useMutation({
+    mutationFn: () =>
+      signalApi.respondToAction(action, {
+        response: "SUBMIT",
+        materialDigest: action.materialDigest,
+      }),
+    onSuccess: async () => {
+      await invalidateAction(queryClient, action);
+    },
+    onError: (error: Error) => Alert.alert("Task not resumed", error.message),
+  });
   const connect = useMutation({
     mutationFn: () =>
       signalApi.linkConnection({
         provider,
         toolkit,
         requestedScopes: scopes,
+        originatingTaskId: action.taskId,
         returnDeepLink: `signal://tasks/${action.taskId}/actions/${action.id}`,
       }),
-    onSuccess: ({ redirectUrl }) => Linking.openURL(redirectUrl),
+    onSuccess: ({ alreadyConnected, redirectUrl }) => {
+      if (alreadyConnected === true) {
+        automaticResumeAttempted.current = true;
+        resume.mutate();
+        return;
+      }
+      void Linking.openURL(redirectUrl);
+    },
     onError: (error: Error) => Alert.alert("Connection not started", error.message),
   });
+  useEffect(() => {
+    if (!connected || resume.isPending || automaticResumeAttempted.current) return;
+    automaticResumeAttempted.current = true;
+    resume.mutate();
+  }, [connected, resume]);
   return (
     <ActionFrame action={action}>
       <Text style={{ color: "#829A94", fontSize: 12, marginTop: signalSpacing.md }}>
         Provider: {provider} · Requested scopes: {scopes.join(", ")}
       </Text>
       <Pressable
-        disabled={connect.isPending}
-        onPress={() => connect.mutate()}
+        disabled={connect.isPending || resume.isPending}
+        onPress={() => (connected ? resume.mutate() : connect.mutate())}
         style={{
           height: 48,
           borderRadius: signalRadius.md,
@@ -226,7 +264,13 @@ function ConnectionActionCard({ action }: { action: ActionRequest }) {
       >
         <Link2 color={signalColors.ink} size={18} />
         <Text style={{ color: signalColors.ink, fontWeight: "800" }}>
-          {connect.isPending ? "Opening…" : `Connect ${provider}`}
+          {resume.isPending
+            ? "Resuming…"
+            : connected
+              ? "Continue task"
+              : connect.isPending
+                ? "Opening…"
+                : `Connect ${provider}`}
         </Text>
       </Pressable>
     </ActionFrame>

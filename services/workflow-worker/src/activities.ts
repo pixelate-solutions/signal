@@ -150,6 +150,56 @@ function isTerminal(state: TaskState): boolean {
   return ["COMPLETED", "COMPLETED_WITH_WARNINGS", "FAILED", "CANCELLED"].includes(state);
 }
 
+export function objectiveAllowsSignalTestState(objective: string): boolean {
+  const normalized = objective.toLowerCase();
+  const namesDevelopmentContext = /\b(local|deterministic|fixture|test|development)\b/.test(
+    normalized,
+  );
+  const namesInspectableState = /\b(state|provider|environment|runtime|health)\b/.test(normalized);
+  return namesDevelopmentContext && namesInspectableState;
+}
+
+export function recoverPersistedPlan(value: unknown): Plan | null {
+  if (value === null || typeof value !== "object") return null;
+  const candidate = value as Partial<Plan>;
+  if (!Array.isArray(candidate.steps) || !Array.isArray(candidate.successCriteria)) return null;
+  if (
+    candidate.steps.some(
+      (step) =>
+        step === null ||
+        typeof step !== "object" ||
+        typeof step.id !== "string" ||
+        typeof step.description !== "string" ||
+        typeof step.desiredCapability !== "string",
+    ) ||
+    candidate.successCriteria.some(
+      (criterion) =>
+        criterion === null ||
+        typeof criterion !== "object" ||
+        typeof criterion.id !== "string" ||
+        typeof criterion.description !== "string" ||
+        typeof criterion.required !== "boolean",
+    )
+  ) {
+    return null;
+  }
+  return {
+    steps: structuredClone(candidate.steps),
+    successCriteria: structuredClone(candidate.successCriteria),
+  };
+}
+
+export function verifiedExecutionSummary(
+  executions: readonly { recordedAt: string; result: Pick<ToolResult, "sanitizedMessage"> }[],
+): string {
+  return (
+    [...executions]
+      .sort((left, right) => right.recordedAt.localeCompare(left.recordedAt))
+      .map((execution) => execution.result.sanitizedMessage.trim())
+      .find((summary) => summary.length > 0) ?? "The requested outcome was completed and verified."
+  );
+}
+
 class PersistedPolicyEvaluator implements PolicyEvaluator {
   public constructor(
     private readonly delegate: PolicyEvaluator,
@@ -266,6 +316,8 @@ export type ProductionActivityDependencies = {
   connections: ConnectionManager;
   model: ModelProvider;
   records: TenantRecordStore;
+  nativeGoogleTools?: boolean;
+  nativeGitHubTools?: boolean;
   notifications?: NotificationService;
   useOpa?: boolean;
   artifacts?: Pick<ArtifactService, "get" | "representation">;
@@ -277,30 +329,34 @@ export class ProductionWorkflowActivities implements WorkflowActivities {
   readonly #gateway: ToolGateway;
 
   public constructor(private readonly dependencies: ProductionActivityDependencies) {
-    registerGoogleTools(this.#registry, (connectionId, context) =>
-      dependencies.connections.accessToken(
-        context.tenantId,
-        connectionId,
-        context.taskId,
-        context.adapter,
-      ),
-    );
-    this.#registry.register(
-      createGitHubIssueAdapter((connectionId, context) =>
+    if (dependencies.nativeGoogleTools === true) {
+      registerGoogleTools(this.#registry, (connectionId, context) =>
         dependencies.connections.accessToken(
           context.tenantId,
           connectionId,
           context.taskId,
           context.adapter,
         ),
-      ),
-    );
+      );
+    }
+    if (dependencies.nativeGitHubTools === true) {
+      this.#registry.register(
+        createGitHubIssueAdapter((connectionId, context) =>
+          dependencies.connections.accessToken(
+            context.tenantId,
+            connectionId,
+            context.taskId,
+            context.adapter,
+          ),
+        ),
+      );
+    }
     registerConfiguredComposioTools(
       this.#registry,
       dependencies.connections,
       process.env["COMPOSIO_TOOLS_JSON"],
     );
-    if (isDemoMode() || process.env["NODE_ENV"] === "development") {
+    if (isDemoMode()) {
       registerSignalTestStateTools(this.#registry);
     }
     registerBrowserTool(this.#registry, {
@@ -431,6 +487,12 @@ export class ProductionWorkflowActivities implements WorkflowActivities {
   }
 
   public async retrieveAndPlan(task: TaskActivityRef): Promise<Plan> {
+    const recovered = await this.dependencies.records.runExclusive(
+      task.tenantId,
+      async (transaction) => recoverPersistedPlan(await transaction.get("task.plans", task.taskId)),
+    );
+    if (recovered !== null) return recovered;
+
     const { principal, value } = await this.context(task);
     const detail = await this.dependencies.tasks.getTaskDetail(principal, task.taskId);
     const conversation = await this.dependencies.tasks.getConversation(
@@ -471,6 +533,8 @@ export class ProductionWorkflowActivities implements WorkflowActivities {
           name: manifest.name,
           description: manifest.description,
           inputSchema: manifest.inputSchema,
+          connectionProvider: manifest.auth[0]?.provider ?? null,
+          sideEffecting: manifest.sideEffect !== "none",
         })),
         maxOutputTokens: Math.min(value.budget.maxModelTokens, 16_000),
         deadline:
@@ -533,6 +597,18 @@ export class ProductionWorkflowActivities implements WorkflowActivities {
     approval: StepApproval = {},
   ): Promise<StepOutcome> {
     const { principal, value } = await this.context(task);
+    if (
+      step.desiredCapability.startsWith("signal_test_state.") &&
+      !objectiveAllowsSignalTestState(value.objective)
+    ) {
+      return {
+        kind: "failed",
+        stepId: step.id,
+        observation:
+          "The deterministic development provider cannot satisfy this objective. No external action was performed.",
+        retryable: false,
+      };
+    }
     const discovered = this.candidates(step.desiredCapability);
     const candidates: ToolManifest[] = [];
     for (const candidate of discovered) {
@@ -582,6 +658,11 @@ export class ProductionWorkflowActivities implements WorkflowActivities {
             : connections.find(
                 (candidate) =>
                   candidate.provider === provider &&
+                  (manifest.source === "composio"
+                    ? candidate.source === "composio"
+                    : manifest.source === "native"
+                      ? candidate.source === "native"
+                      : true) &&
                   candidate.status === "ACTIVE" &&
                   manifest.requiredScopes.every((scope) => candidate.scopes.includes(scope)),
               );
@@ -602,14 +683,24 @@ export class ProductionWorkflowActivities implements WorkflowActivities {
     );
     const selected = selectRoute(routes.map(({ route }) => route));
     if (selected === undefined) {
-      const provider = candidates.flatMap((manifest) => manifest.auth)[0]?.provider ?? "provider";
+      const connectionManifest = candidates.find((manifest) => manifest.auth.length > 0);
+      const provider = connectionManifest?.auth[0]?.provider ?? "provider";
+      const toolkit =
+        connectionManifest?.source === "composio"
+          ? (connectionManifest.name.split(".")[1] ?? provider)
+          : provider;
       return {
         kind: "action_required",
         stepId: step.id,
         actionType: "CONNECTION_REQUIRED",
         title: `Connect ${provider}`,
         description: `Signal needs an active ${provider} connection with the required scopes before it can continue.`,
-        materialPayload: { provider, capability: step.desiredCapability },
+        materialPayload: {
+          provider,
+          toolkit,
+          capability: step.desiredCapability,
+          scopes: connectionManifest?.requiredScopes ?? [],
+        },
         risk: "R1",
         expiresInSeconds: 3_600,
       };
@@ -634,16 +725,22 @@ export class ProductionWorkflowActivities implements WorkflowActivities {
           `${task.taskId}:${step.id}`,
         ),
     );
+    const effectiveInput: Record<string, unknown> = {
+      ...step.input,
+      ...(approval.inputOverride ?? {}),
+      ...(continuation ?? {}),
+      ...(approval.secureInputHandle === undefined
+        ? {}
+        : { mfaValueHandle: approval.secureInputHandle }),
+    };
+    if (manifest.source === "device") {
+      // A device command ID is a control-plane-issued continuation handle, never
+      // model input. Device retries resolve the command through the idempotency key.
+      delete effectiveInput["commandId"];
+    }
     const effectiveStep = {
       ...step,
-      input: {
-        ...step.input,
-        ...(approval.inputOverride ?? {}),
-        ...(continuation ?? {}),
-        ...(approval.secureInputHandle === undefined
-          ? {}
-          : { mfaValueHandle: approval.secureInputHandle }),
-      },
+      input: effectiveInput,
     };
     const result = await this.#gateway.execute({
       toolName: manifest.name,
@@ -747,6 +844,9 @@ export class ProductionWorkflowActivities implements WorkflowActivities {
           ...detail,
           ...(eventStreamPath === undefined ? {} : { eventStreamPath }),
         },
+        ...(result.verificationHint === undefined
+          ? {}
+          : { materialDigest: result.verificationHint }),
         risk: manifest.riskClass,
         ...(typeof detail["approvalThreshold"] === "number"
           ? { approvalThreshold: detail["approvalThreshold"] }
@@ -763,13 +863,20 @@ export class ProductionWorkflowActivities implements WorkflowActivities {
     }
     if (result.status === "CONNECTION_REQUIRED") {
       const provider = manifest.auth[0]?.provider ?? "provider";
+      const toolkit =
+        manifest.source === "composio" ? (manifest.name.split(".")[1] ?? provider) : provider;
       return {
         kind: "action_required",
         stepId: step.id,
         actionType: "CONNECTION_REQUIRED",
         title: `Reconnect ${provider}`,
         description: result.sanitizedMessage,
-        materialPayload: { provider, capability: manifest.name },
+        materialPayload: {
+          provider,
+          toolkit,
+          capability: manifest.name,
+          scopes: manifest.requiredScopes,
+        },
         risk: "R1",
         expiresInSeconds: 3_600,
       };
@@ -816,6 +923,9 @@ export class ProductionWorkflowActivities implements WorkflowActivities {
             title: outcome.title,
             description: outcome.description,
             materialPayload: outcome.materialPayload,
+            ...(outcome.materialDigest === undefined
+              ? {}
+              : { materialDigest: outcome.materialDigest }),
             risk: outcome.risk,
             ...(outcome.approvalThreshold === undefined
               ? {}
@@ -938,7 +1048,7 @@ export class ProductionWorkflowActivities implements WorkflowActivities {
       passed: true,
       warnings: [],
       evidenceIds,
-      summary: "All planned steps have durable successful executions and retained evidence.",
+      summary: verifiedExecutionSummary(executions),
     };
   }
 
@@ -946,7 +1056,27 @@ export class ProductionWorkflowActivities implements WorkflowActivities {
     task: TaskActivityRef,
     verification: VerificationOutcome,
   ): Promise<void> {
-    const { principal } = await this.context(task);
+    const { principal, value } = await this.context(task);
+    if (value.state === "COMPLETED" || value.state === "COMPLETED_WITH_WARNINGS") return;
+    const detail = await this.dependencies.tasks.getTaskDetail(principal, task.taskId);
+    const alreadyRecorded = detail.recentEvents.some(
+      (event) =>
+        event.type === "verification.succeeded" &&
+        event.summary === verification.summary &&
+        JSON.stringify(event.evidenceIds) === JSON.stringify(verification.evidenceIds),
+    );
+    if (!alreadyRecorded) {
+      await this.dependencies.tasks.recordEvent(principal, {
+        taskId: task.taskId,
+        type: "verification.succeeded",
+        actor: { type: "workflow", id: value.workflowId },
+        visibility: "user",
+        summary: verification.summary,
+        details: { warnings: verification.warnings },
+        secretFields: [],
+        evidenceIds: verification.evidenceIds,
+      });
+    }
     await this.dependencies.tasks.complete(principal, task.taskId, verification.warnings);
   }
 

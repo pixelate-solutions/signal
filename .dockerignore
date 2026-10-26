@@ -13,6 +13,8 @@ infra/docker/*.Dockerfile
 **/.terraform
 **/dist
 **/node_modules
+apps/mobile/ios
+apps/mobile/android
 **/*.log
 **/*.tsbuildinfo
 coverage

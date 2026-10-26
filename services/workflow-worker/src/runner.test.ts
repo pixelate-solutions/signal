@@ -81,4 +81,45 @@ describe("durable workflow harness", () => {
     expect(result.state).toBe("COMPLETED");
     expect(executions.filter((step) => step === "write")).toHaveLength(1);
   });
+
+  it("fails the durable task when planning fails instead of leaving it in PLANNING", async () => {
+    const failedReasons: string[] = [];
+    const checkpoints: TaskWorkflowCheckpoint[] = [];
+    const activities: WorkflowActivities = {
+      initializeTask: async () => undefined,
+      transitionTask: async () => undefined,
+      retrieveAndPlan: async () => {
+        throw new Error("Provider rejected the planning request.");
+      },
+      executeStep: async () => {
+        throw new Error("Execution must not start when planning fails.");
+      },
+      createActionRequest: async () => "act_demo",
+      recordInstruction: async () => undefined,
+      recordExternalEvent: async () => undefined,
+      verifyOutcome: async () => ({
+        passed: false,
+        warnings: [],
+        evidenceIds: [],
+        summary: "Not reached.",
+      }),
+      completeTask: async () => undefined,
+      failTask: async (_task, reason) => {
+        failedReasons.push(reason);
+      },
+      persistCheckpoint: async (_task, checkpoint) => {
+        checkpoints.push(structuredClone(checkpoint));
+      },
+      revokeTaskLeases: async () => undefined,
+    };
+
+    const result = await runDeterministicTaskHarness("tsk_plan_failure", activities);
+
+    expect(result).toMatchObject({
+      state: "FAILED",
+      lastObservation: "Planning failed before any external action was performed.",
+    });
+    expect(failedReasons).toEqual(["Planning failed before any external action was performed."]);
+    expect(checkpoints.at(-1)?.state).toBe("FAILED");
+  });
 });

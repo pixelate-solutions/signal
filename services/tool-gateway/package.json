@@ -23,6 +23,7 @@
     "@signal/persistence": "workspace:*",
     "@signal/policy-client": "workspace:*",
     "@signal/tool-sdk": "workspace:*",
-    "ajv": "^8.17.1"
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1"
   }
 }

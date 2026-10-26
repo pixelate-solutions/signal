@@ -159,6 +159,18 @@ describe("connection lifecycle", () => {
     expect(linked.connection).toMatchObject({ provider: "google", status: "ACTIVE" });
 
     // A later conversation discovers and reuses the authoritative active connection.
+    const reused = await manager.link(principal, {
+      provider: "google",
+      toolkit: "gmail",
+      requestedScopes: ["gmail.readonly"],
+      originatingTaskId: "tsk_later0001",
+      returnDeepLink: "signal://tasks/tsk_later0001/actions/act_later0001",
+    });
+    expect(reused).toMatchObject({
+      alreadyConnected: true,
+      connectionId: linked.connection.id,
+      redirectUrl: "signal://tasks/tsk_later0001/actions/act_later0001",
+    });
     expect(await manager.list(principal)).toEqual([
       expect.objectContaining({ id: linked.connection.id, status: "ACTIVE", isDefault: true }),
     ]);
@@ -232,12 +244,15 @@ describe("connection lifecycle", () => {
           revoke: async (id) => {
             calls.push(`revoke:${id}`);
           },
-          execute: async () => ({
-            successful: true,
-            data: { ok: true },
-            error: null,
-            logId: "log_slack_0001",
-          }),
+          execute: async ({ connectedAccountId, userId }) => {
+            calls.push(`execute:${connectedAccountId}:${userId}`);
+            return {
+              successful: true,
+              data: { ok: true },
+              error: null,
+              logId: "log_slack_0001",
+            };
+          },
         },
       },
     );
@@ -261,6 +276,18 @@ describe("connection lifecycle", () => {
         "slack.message.send",
       ),
     ).resolves.toBe("ca_slack_0001");
+    await expect(
+      manager.executeComposioTool({
+        tenantId: principal.tenantId,
+        connectionId: linked.connection.id,
+        taskId: "tsk_demo0001",
+        adapter: "slack.message.send",
+        toolSlug: "SLACK_SEND_MESSAGE",
+        toolVersion: "20260702_01",
+        arguments: { text: "hello" },
+        signal: AbortSignal.timeout(1_000),
+      }),
+    ).resolves.toMatchObject({ successful: true });
     await manager.setStatus(principal, linked.connection.id, "DISABLED");
     await manager.setStatus(principal, linked.connection.id, "ACTIVE");
     await manager.setStatus(principal, linked.connection.id, "REVOKED");
@@ -268,6 +295,8 @@ describe("connection lifecycle", () => {
       "link:ac_slack_production:true",
       "complete:creq_slack_0001",
       "account:ca_slack_0001",
+      "account:ca_slack_0001",
+      "execute:ca_slack_0001:usr_demo0001",
       "enabled:ca_slack_0001:false",
       "enabled:ca_slack_0001:true",
       "revoke:ca_slack_0001",

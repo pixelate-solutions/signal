@@ -13,7 +13,7 @@ Build a complete production-ready application whose user-facing mobile interface
 
 The phone is a secure cockpit. The backend owns and runs every durable task. A user may force-quit the app, turn off the phone, lose connectivity, or sign in from another device. Work continues in the cloud until it completes, fails terminally, is cancelled, or reaches a durable `WAITING_USER` state. When human action is required, send a push notification with a privacy-safe description and deep-link to the exact action card inside the task conversation.
 
-The default backend model is **Meta Muse Spark 1.1**, using the current official Meta Model API model identifier `meta/muse-spark-1.1`. Do not guess the provider’s current HTTP contract. Inspect the official Meta developer documentation available at implementation time, document the selected API version and request format in `docs/vendor/meta-model-api.md`, and implement it behind a provider-neutral interface.
+The default backend model is **Meta Muse Spark 1.1**, using the current official Meta Model API wire identifier `muse-spark-1.1`. Do not guess the provider’s current HTTP contract. Inspect the authenticated provider model catalog and official Meta developer documentation available at implementation time, document the selected API version and request format in `docs/vendor/meta-model-api.md`, and implement it behind a provider-neutral interface.
 
 ## 2. Non-negotiable product behavior
 
@@ -183,7 +183,7 @@ OIDC_AUDIENCE
 OIDC_MOBILE_REDIRECT_URI
 META_MODEL_API_BASE_URL
 META_MODEL_API_KEY
-META_MODEL_ID=meta/muse-spark-1.1
+META_MODEL_ID=muse-spark-1.1
 COMPOSIO_API_KEY
 COMPOSIO_CALLBACK_URL
 OPA_URL

@@ -10,21 +10,15 @@ import { File } from "expo-file-system";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import { ArrowUp, Camera, FilePlus2, Images, Mic, ScanLine, Square, X } from "lucide-react-native";
-import { useState } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { useRef, useState } from "react";
+import { ActivityIndicator, Alert, Platform, Pressable, Text, TextInput, View } from "react-native";
 
 import { signalColors, signalRadius, signalSpacing } from "@signal/ui";
 
 import type { LocalAttachment } from "../api/upload";
+
+const INPUT_MIN_HEIGHT = 52;
+const INPUT_MAX_HEIGHT = 132;
 
 export function Composer({
   sending,
@@ -35,6 +29,8 @@ export function Composer({
 }) {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<LocalAttachment[]>([]);
+  const [inputHeight, setInputHeight] = useState(INPUT_MIN_HEIGHT);
+  const input = useRef<TextInput>(null);
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recorderState = useAudioRecorderState(recorder);
 
@@ -164,13 +160,26 @@ export function Composer({
     const objective = text.trim();
     if (objective.length === 0 || sending) return;
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    await onSend(objective, attachments);
+    try {
+      await onSend(objective, attachments);
+    } catch {
+      // The owning mutation displays the actionable API error and preserves this draft for retry.
+      return;
+    }
     setText("");
     setAttachments([]);
+    setInputHeight(INPUT_MIN_HEIGHT);
+  };
+
+  const submitFromKeyboard = () => {
+    void submit();
+    // React Native Web still uses blurOnSubmit for multiline inputs. Restore focus after its
+    // deferred blur so desktop users can continue typing like they can in the native app.
+    if (Platform.OS === "web") setTimeout(() => input.current?.focus(), 50);
   };
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
+    <>
       {attachments.length > 0 && (
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
           {attachments.map((attachment, index) => (
@@ -223,18 +232,34 @@ export function Composer({
         }}
       >
         <TextInput
+          ref={input}
           accessibilityLabel="Task objective"
           multiline
+          blurOnSubmit={Platform.OS === "web"}
           maxLength={20_000}
+          onContentSizeChange={(event) => {
+            const nextHeight = Math.min(
+              INPUT_MAX_HEIGHT,
+              Math.max(INPUT_MIN_HEIGHT, Math.ceil(event.nativeEvent.contentSize.height)),
+            );
+            setInputHeight((current) => (current === nextHeight ? current : nextHeight));
+          }}
           placeholder="What outcome should Signal handle?"
           placeholderTextColor="#82918C"
+          returnKeyType="send"
+          scrollEnabled={inputHeight >= INPUT_MAX_HEIGHT}
+          submitBehavior="submit"
+          textAlignVertical="top"
           value={text}
           onChangeText={setText}
+          onSubmitEditing={submitFromKeyboard}
           style={{
-            minHeight: 52,
-            maxHeight: 130,
+            height: inputHeight,
+            minHeight: INPUT_MIN_HEIGHT,
+            maxHeight: INPUT_MAX_HEIGHT,
             paddingHorizontal: signalSpacing.sm,
             paddingTop: signalSpacing.sm,
+            paddingBottom: signalSpacing.sm,
             color: signalColors.ink,
             fontSize: 16,
             lineHeight: 22,
@@ -354,6 +379,6 @@ export function Composer({
           </Pressable>
         </View>
       </View>
-    </KeyboardAvoidingView>
+    </>
   );
 }

@@ -205,7 +205,7 @@ signal_payload="$(
         INVITATION_EMAIL_FROM: $input.INVITATION_EMAIL_FROM,
         META_MODEL_API_BASE_URL: ($input.META_MODEL_API_BASE_URL // "https://api.meta.ai/v1"),
         META_MODEL_API_KEY: $input.META_MODEL_API_KEY,
-        META_MODEL_ID: ($input.META_MODEL_ID // "meta/muse-spark-1.1"),
+        META_MODEL_ID: ($input.META_MODEL_ID // "muse-spark-1.1"),
         META_MODEL_API_VERSION: ($input.META_MODEL_API_VERSION // "public-preview-2026-07"),
         META_INPUT_COST_MICROS_PER_MILLION: ($input.META_INPUT_COST_MICROS_PER_MILLION // "0"),
         META_OUTPUT_COST_MICROS_PER_MILLION: ($input.META_OUTPUT_COST_MICROS_PER_MILLION // "0"),

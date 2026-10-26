@@ -17,7 +17,7 @@ function responseEnvelope(text: string) {
   return {
     id: `resp_${randomUUID().replaceAll("-", "")}`,
     object: "response",
-    model: "meta/muse-spark-1.1",
+    model: "muse-spark-1.1",
     output_text: text,
     output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text }] }],
     usage: {
@@ -32,7 +32,7 @@ export function createFixtureServer(): FastifyInstance {
   const app = Fastify({ logger: false, bodyLimit: 2 * 1024 * 1024 });
 
   app.get("/health", async () => ({ status: "ok", service: "signal-local-fixtures" }));
-  app.get("/v1/models", async () => ({ data: [{ id: "meta/muse-spark-1.1", object: "model" }] }));
+  app.get("/v1/models", async () => ({ data: [{ id: "muse-spark-1.1", object: "model" }] }));
   app.post<{ Body: Record<string, unknown> }>("/v1/responses", async (request, reply) => {
     const fixture = request.body["fixture_output"];
     const output = JSON.stringify(

@@ -30,7 +30,7 @@ x-service-environment: &service-environment
   OPA_URL: http://opa:8181
   META_MODEL_API_BASE_URL: http://local-fixtures:3100/v1
   META_MODEL_API_KEY: signal-local-fixture
-  META_MODEL_ID: meta/muse-spark-1.1
+  META_MODEL_ID: muse-spark-1.1
   META_MODEL_API_VERSION: public-preview-2026-07
   PUSH_PROVIDER: development
   OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
